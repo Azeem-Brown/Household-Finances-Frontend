@@ -1,0 +1,16 @@
+<MudText Typo="Typo.h4" GutterBottom="true">@Title</MudText>
+
+@if (!string.IsNullOrWhiteSpace(Subtitle))
+{
+    <MudText Typo="Typo.subtitle1" Class="mud-text-secondary mb-4">@Subtitle</MudText>
+}
+
+@code {
+    /// <summary>Heading shown at the top of a page.</summary>
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = string.Empty;
+
+    /// <summary>Optional supporting text shown beneath the heading.</summary>
+    [Parameter]
+    public string? Subtitle { get; set; }
+}
