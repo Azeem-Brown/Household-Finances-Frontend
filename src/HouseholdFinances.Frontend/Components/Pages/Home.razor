@@ -16,3 +16,40 @@
         Go to Household Dashboard
     </MudButton>
 </MudPaper>
+
+<MudPaper Class="pa-6 mt-4" Elevation="1">
+    <MudText Typo="Typo.h6" GutterBottom="true">Error handling convention (placeholder)</MudText>
+    <MudText Typo="Typo.body2" Class="mb-4">
+        Placeholder demonstration of the client-side error convention. Throw with a
+        <code>ClientErrorCode</code> and the identifier of significance, then show the formatted
+        message. Later issues replace this with real error handling.
+    </MudText>
+    <MudButton Variant="Variant.Outlined"
+               Color="Color.Warning"
+               StartIcon="@Icons.Material.Filled.Warning"
+               OnClick="ThrowSampleError">
+        Throw sample error
+    </MudButton>
+    @if (_sampleErrorMessage is not null)
+    {
+        <MudAlert Severity="Severity.Warning" Class="mt-4">@_sampleErrorMessage</MudAlert>
+    }
+</MudPaper>
+
+@code {
+    private string? _sampleErrorMessage;
+
+    // Placeholder code path demonstrating the convention: throw with an enum value and the
+    // identifier of significance, then surface the formatted message.
+    private void ThrowSampleError()
+    {
+        try
+        {
+            throw new ClientErrorException(ClientErrorCode.NotFound, 42);
+        }
+        catch (ClientErrorException exception)
+        {
+            _sampleErrorMessage = exception.Message;
+        }
+    }
+}
