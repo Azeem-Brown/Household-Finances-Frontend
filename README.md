@@ -8,6 +8,22 @@ MudBlazor frontend for the Household Finances family expense planner.
 - MudBlazor component library
 - Consumes the API in [Household-Finances-Backend](https://github.com/Azeem-Brown/Household-Finances-Backend)
 
+## Project structure
+
+- `HouseholdFinances.slnx` — solution file (repository root)
+- `src/HouseholdFinances.Frontend/` — Blazor Server (interactive server rendering) app
+  - `Components/Pages/` — routable pages
+  - `Components/Shared/` — reusable (non-routable) components
+  - `Components/Layout/` — app shell, navigation, and MudBlazor providers
+  - `Services/` — frontend-only client services
+
+## Build and run
+
+```powershell
+dotnet build HouseholdFinances.slnx
+dotnet run --project src/HouseholdFinances.Frontend
+```
+
 ## Branching
 
 | Branch | Purpose |
