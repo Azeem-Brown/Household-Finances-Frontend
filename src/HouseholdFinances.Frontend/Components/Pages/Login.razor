@@ -1,9 +1,87 @@
 @page "/login"
+@inject IAuthenticationService AuthenticationService
+@inject NavigationManager Navigation
 
 <PageTitle>Login | Household Finances</PageTitle>
 
 <PageHeader Title="Login" Subtitle="Sign in to your household account." />
 
-<MudAlert Severity="Severity.Info">
-    This page is a scaffold placeholder. Its functionality is implemented in a later issue.
-</MudAlert>
+<MudPaper Class="pa-6" Elevation="1" Style="max-width: 30rem;">
+    <MudText Typo="Typo.body1" Class="mb-4">
+        Continue with your Google account to reach your household.
+    </MudText>
+
+    <div data-testid="signin">
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.Login"
+                   Disabled="_isSigningIn"
+                   OnClick="SignInAsync">
+            Sign in with Google
+        </MudButton>
+    </div>
+
+    @if (_isSigningIn)
+    {
+        <div class="d-flex align-center mt-4" data-testid="signin-progress">
+            <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Primary" />
+            <MudText Typo="Typo.body2" Class="ml-3">Signing in...</MudText>
+        </div>
+    }
+
+    @if (_errorMessage is not null)
+    {
+        <div data-testid="login-error">
+            <MudAlert Severity="Severity.Error" Class="mt-4">@_errorMessage</MudAlert>
+        </div>
+    }
+</MudPaper>
+
+@code {
+    private bool _isSigningIn;
+    private string? _errorMessage;
+
+    // Starts the third-party sign-in through the client-side authentication service. The service
+    // decides the post-login destination (setup when the user has no household, dashboard when one
+    // exists); this page only routes to it. Failures are shown with the shared client error
+    // convention and never navigate away.
+    private async Task SignInAsync()
+    {
+        if (_isSigningIn)
+        {
+            return;
+        }
+
+        _isSigningIn = true;
+        _errorMessage = null;
+
+        try
+        {
+            var result = await AuthenticationService.SignInAsync();
+
+            if (result.Succeeded)
+            {
+                Navigation.NavigateTo(result.Destination == AuthenticationDestination.Setup
+                    ? "/setup"
+                    : "/dashboard");
+                return;
+            }
+
+            _errorMessage = result.ErrorMessage;
+        }
+        catch (ClientErrorException exception)
+        {
+            _errorMessage = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            // Unexpected failures still display through the shared convention rather than an
+            // unhandled circuit error.
+            _errorMessage = ClientErrorFormatter.Format(ClientErrorCode.Unknown, exception.GetType().Name);
+        }
+        finally
+        {
+            _isSigningIn = false;
+        }
+    }
+}

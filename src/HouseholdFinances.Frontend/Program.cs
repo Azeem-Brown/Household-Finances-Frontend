@@ -14,6 +14,11 @@ builder.Services.AddMudServices();
 // Frontend-only client services.
 builder.Services.AddScoped<ThemeService>();
 
+// Authentication entry point for the Login page. The real Google Identity sign-in, backed by the
+// API-issued JWT, is delivered by backend issue #11; until then this honest placeholder reports
+// sign-in as unavailable instead of pretending to authenticate.
+builder.Services.AddScoped<IAuthenticationService, UnavailableAuthenticationService>();
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
