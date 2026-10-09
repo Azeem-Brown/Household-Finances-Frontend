@@ -21,5 +21,11 @@ public enum ClientErrorCode
     Unauthorized = 3,
 
     /// <summary>The requested change conflicts with the current state.</summary>
-    Conflict = 4
+    Conflict = 4,
+
+    /// <summary>
+    /// The caller has sent too many requests in a given amount of time. Matches the backend's
+    /// rate-limit responses (backend issue #25).
+    /// </summary>
+    TooManyRequests = 5
 }
