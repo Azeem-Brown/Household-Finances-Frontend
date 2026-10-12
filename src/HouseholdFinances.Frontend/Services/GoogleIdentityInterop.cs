@@ -4,8 +4,8 @@ namespace HouseholdFinances.Frontend.Services;
 
 /// <summary>
 /// The default <see cref="IGoogleIdentityProvider"/>. It imports the
-/// <c>wwwroot/js/google-identity.js</c> interop module and invokes it to run Google Identity
-/// Services in the browser and return the ID token.
+/// <c>wwwroot/js/google-identity.js</c> interop module and invokes it to render Google's sign-in
+/// button in the browser and return the ID token.
 /// </summary>
 /// <remarks>
 /// All of the browser-facing work lives in the JavaScript module; this class is only the thin,

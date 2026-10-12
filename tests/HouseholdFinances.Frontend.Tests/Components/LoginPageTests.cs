@@ -9,9 +9,16 @@ using MudBlazor.Services;
 namespace HouseholdFinances.Frontend.Tests.Components;
 
 /// <summary>
-/// bUnit component tests for the Login page (issue #9): render, sign-in action, failure display
-/// through the shared client error convention, and post-login routing.
+/// bUnit component tests for the Login page (issue #9, updated by issue #31): render, sign-in
+/// action, failure display through the shared client error convention, and post-login routing.
 /// </summary>
+/// <remarks>
+/// Google's rendered button is produced by JavaScript in the browser, which cannot run in unit
+/// tests, so these tests stand in for the authentication service with a test double. They prove the
+/// page hosts the button container, starts the sign-in flow once so the rendered button works,
+/// surfaces every failure as a visible error, and routes on success. They do not prove that the
+/// browser renders the button or that a real Google sign-in completes.
+/// </remarks>
 public class LoginPageTests : BunitContext
 {
     private readonly StubAuthenticationService _authenticationService = new();
@@ -28,58 +35,98 @@ public class LoginPageTests : BunitContext
     }
 
     [Fact]
-    public void Login_RendersTitleAndSignInAction()
+    public void Login_RendersTitleAndGoogleButtonContainer()
     {
         var cut = Render<Login>();
 
         Assert.Equal("Login", cut.Find("h4").TextContent.Trim());
 
-        var button = cut.Find("[data-testid='signin'] button");
-        Assert.Contains("Sign in with Google", button.TextContent);
-        Assert.False(button.HasAttribute("disabled"));
+        // The JavaScript module renders Google's button into this container, so the container must
+        // be present for the button to appear.
+        var container = cut.Find("#google-signin-button");
+        Assert.Equal("signin", container.GetAttribute("data-testid"));
     }
 
     [Fact]
-    public async Task SignIn_Failure_ShowsConventionMessageAndDoesNotNavigate()
+    public void Login_StartsTheSignInFlowOnceForTheRenderedButton()
+    {
+        var cut = Render<Login>();
+
+        // The flow must be in flight so the rendered button can start sign-in when clicked.
+        cut.WaitForAssertion(() => Assert.Equal(1, _authenticationService.CallCount));
+    }
+
+    [Fact]
+    public void SignIn_Failure_ShowsConventionMessageAndDoesNotNavigate()
     {
         _authenticationService.Result =
             AuthenticationResult.Failure(ClientErrorCode.Unauthorized, 7);
 
         var cut = Render<Login>();
 
-        await cut.Find("[data-testid='signin'] button").ClickAsync();
+        cut.WaitForAssertion(() =>
+        {
+            var alert = cut.Find("[data-testid='login-error']");
+            Assert.Equal("Unauthorized 7", alert.TextContent.Trim());
+            Assert.Equal("http://localhost/", _navigation.Uri);
+        });
 
-        var alert = cut.Find("[data-testid='login-error']");
-        Assert.Equal("Unauthorized 7", alert.TextContent.Trim());
-        Assert.Equal("http://localhost/", _navigation.Uri);
         Assert.Equal(1, _authenticationService.CallCount);
     }
 
     [Fact]
-    public async Task SignIn_SuccessWithoutHousehold_NavigatesToSetup()
+    public void SignIn_ClientErrorException_ShowsItsConventionMessage()
+    {
+        _authenticationService.Throw = new ClientErrorException(ClientErrorCode.Conflict, "household");
+
+        var cut = Render<Login>();
+
+        cut.WaitForAssertion(() =>
+        {
+            var alert = cut.Find("[data-testid='login-error']");
+            Assert.Equal("Conflict household", alert.TextContent.Trim());
+            Assert.Equal("http://localhost/", _navigation.Uri);
+        });
+    }
+
+    [Fact]
+    public void SignIn_UnexpectedException_ShowsConventionMessageAndDoesNotNavigate()
+    {
+        _authenticationService.Throw = new InvalidOperationException("boom");
+
+        var cut = Render<Login>();
+
+        cut.WaitForAssertion(() =>
+        {
+            var alert = cut.Find("[data-testid='login-error']");
+            Assert.Equal("Unknown InvalidOperationException", alert.TextContent.Trim());
+            Assert.Equal("http://localhost/", _navigation.Uri);
+        });
+    }
+
+    [Fact]
+    public void SignIn_SuccessWithoutHousehold_NavigatesToSetup()
     {
         _authenticationService.Result =
             AuthenticationResult.Success(AuthenticationDestination.Setup);
 
         var cut = Render<Login>();
 
-        await cut.Find("[data-testid='signin'] button").ClickAsync();
-
-        Assert.EndsWith("/setup", _navigation.Uri, StringComparison.Ordinal);
+        cut.WaitForAssertion(() =>
+            Assert.EndsWith("/setup", _navigation.Uri, StringComparison.Ordinal));
         Assert.Empty(cut.FindAll("[data-testid='login-error']"));
     }
 
     [Fact]
-    public async Task SignIn_SuccessWithHousehold_NavigatesToDashboard()
+    public void SignIn_SuccessWithHousehold_NavigatesToDashboard()
     {
         _authenticationService.Result =
             AuthenticationResult.Success(AuthenticationDestination.Dashboard);
 
         var cut = Render<Login>();
 
-        await cut.Find("[data-testid='signin'] button").ClickAsync();
-
-        Assert.EndsWith("/dashboard", _navigation.Uri, StringComparison.Ordinal);
+        cut.WaitForAssertion(() =>
+            Assert.EndsWith("/dashboard", _navigation.Uri, StringComparison.Ordinal));
         Assert.Empty(cut.FindAll("[data-testid='login-error']"));
     }
 }
