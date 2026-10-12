@@ -9,10 +9,11 @@ using BillsPage = HouseholdFinances.Frontend.Components.Pages.Bills;
 namespace HouseholdFinances.Frontend.Tests.Components;
 
 /// <summary>
-/// bUnit component tests for the Bills page (issue #14): the populated state renders each bill's
-/// label, value, dates, and recurring state; the summary equals the sum of the listed bills; and
-/// the empty state renders a call to action instead of a bare table. Load failures surface through
-/// the shared client error convention.
+/// bUnit component tests for the Bills page (issues #14 and #19): the populated state renders each
+/// bill's label, value, dates, and recurring state; the summary equals the sum of the listed bills;
+/// the empty state renders a call to action instead of a bare table; and the create/edit form
+/// validates its input, shows the interval selector only for recurring bills, and posts, puts, and
+/// deletes through the shared error convention. Load failures surface through that same convention.
 /// </summary>
 /// <remarks>
 /// The API client is replaced with a test double, so no live backend or browser is involved. The
