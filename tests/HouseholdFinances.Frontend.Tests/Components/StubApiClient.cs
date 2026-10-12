@@ -15,14 +15,31 @@ internal sealed class StubApiClient : IApiClient
     /// <summary>Gets the authenticated GET paths that were requested, in order.</summary>
     public List<string> Gets { get; } = new();
 
-    /// <summary>Gets or sets the response returned by <see cref="GetAsync{TResponse}"/>.</summary>
+    /// <summary>
+    /// Gets or sets the response returned by <see cref="GetAsync{TResponse}"/> when no path-specific
+    /// response is registered in <see cref="GetResponsesByPath"/>.
+    /// </summary>
     public object? GetResponse { get; set; }
+
+    /// <summary>
+    /// Gets per-path responses for <see cref="GetAsync{TResponse}"/>, used when a component makes
+    /// several GETs that return different shapes (for example the household list and then that
+    /// household's income). A path registered here takes precedence over <see cref="GetResponse"/>.
+    /// </summary>
+    public Dictionary<string, object?> GetResponsesByPath { get; } = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Gets or sets an exception to throw instead of returning a response from
     /// <see cref="GetAsync{TResponse}"/> or <see cref="PostAsync{TRequest, TResponse}"/>.
     /// </summary>
     public Exception? Throw { get; set; }
+
+    /// <summary>
+    /// Gets per-path exceptions for <see cref="GetAsync{TResponse}"/>, so a test can fail one call
+    /// (for example a nested income request returning NotFound) while earlier calls succeed. A path
+    /// registered here takes precedence over <see cref="Throw"/>.
+    /// </summary>
+    public Dictionary<string, Exception> ThrowByPath { get; } = new(StringComparer.Ordinal);
 
     /// <inheritdoc />
     public Task<TResponse> PostAsync<TRequest, TResponse>(
@@ -42,9 +59,19 @@ internal sealed class StubApiClient : IApiClient
     {
         Gets.Add(path);
 
-        return Throw is null
-            ? Task.FromResult((TResponse)GetResponse!)
-            : Task.FromException<TResponse>(Throw);
+        if (ThrowByPath.TryGetValue(path, out var pathThrow))
+        {
+            return Task.FromException<TResponse>(pathThrow);
+        }
+
+        if (Throw is not null)
+        {
+            return Task.FromException<TResponse>(Throw);
+        }
+
+        var response = GetResponsesByPath.TryGetValue(path, out var mapped) ? mapped : GetResponse;
+
+        return Task.FromResult((TResponse)response!);
     }
 
     /// <inheritdoc />
