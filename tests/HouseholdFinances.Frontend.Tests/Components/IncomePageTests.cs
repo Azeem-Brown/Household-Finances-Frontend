@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Bunit;
 using HouseholdFinances.Frontend.Models;
 using HouseholdFinances.Frontend.Services;
@@ -19,8 +20,10 @@ namespace HouseholdFinances.Frontend.Tests.Components;
 /// the entries and total with the decided money rules, and shows guidance or an error. They do not
 /// prove the real backend returns the entries or that a browser renders the page.
 /// </remarks>
-public class IncomePageTests : BunitContext
+public class IncomePageTests : BunitContext, IAsyncLifetime
 {
+    private static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web);
+
     private readonly StubApiClient _apiClient = new();
 
     public IncomePageTests()
@@ -30,6 +33,13 @@ public class IncomePageTests : BunitContext
         Services.AddMudServices();
         Services.AddSingleton<IApiClient>(_apiClient);
     }
+
+    // The create/edit form renders MudBlazor inputs that resolve services which only implement
+    // IAsyncDisposable, so the context must be disposed asynchronously. xUnit routes teardown
+    // through IAsyncLifetime instead of the synchronous IDisposable.Dispose when it is implemented.
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    async Task IAsyncLifetime.DisposeAsync() => await ((IAsyncDisposable)this).DisposeAsync();
 
     [Fact]
     public void Income_Populated_RendersEachEntryWithItsLabelAndValue()
@@ -209,6 +219,229 @@ public class IncomePageTests : BunitContext
             var alert = cut.Find("[data-testid='income-error']");
             Assert.Equal("Unknown InvalidOperationException", alert.TextContent.Trim());
         });
+    }
+
+    [Fact]
+    public void Income_AddForm_IsHiddenUntilAddIsChosenAndStartsWithNoIntervalSelector()
+    {
+        ArrangeHouseholdWith(SampleIncome("Salary", 1500.00));
+
+        var cut = Render<IncomePage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='income-table']")));
+
+        Assert.Empty(cut.FindAll("[data-testid='income-form']"));
+
+        cut.Find("[data-testid='income-add']").Click();
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='income-form']")));
+
+        // A new entry is one-off by default, so the interval selector is not shown.
+        Assert.Empty(cut.FindAll("[data-testid='income-interval']"));
+    }
+
+    [Fact]
+    public void Income_AddForm_EmptyName_ShowsRequiredMessageAndDoesNotCallTheApi()
+    {
+        ArrangeHouseholdWith();
+
+        var cut = Render<IncomePage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='income-add']")));
+
+        cut.Find("[data-testid='income-add']").Click();
+        cut.Find("[data-testid='income-form-submit']").Click();
+
+        cut.WaitForAssertion(() =>
+            Assert.Contains(IncomePage.NameRequiredMessage, cut.Markup));
+
+        Assert.Empty(_apiClient.Posts);
+        Assert.Single(cut.FindAll("[data-testid='income-form']"));
+    }
+
+    [Fact]
+    public void Income_AddForm_NegativeValue_ShowsMessageAndDoesNotCallTheApi()
+    {
+        ArrangeHouseholdWith();
+
+        var cut = Render<IncomePage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='income-add']")));
+
+        cut.Find("[data-testid='income-add']").Click();
+        cut.Find("[data-testid='income-form-name']").Input("Salary");
+        cut.Find("[data-testid='income-form-value']").Change("-5");
+        cut.Find("[data-testid='income-form-submit']").Click();
+
+        cut.WaitForAssertion(() =>
+            Assert.Contains(IncomePage.ValueNegativeMessage, cut.Markup));
+
+        Assert.Empty(_apiClient.Posts);
+    }
+
+    [Fact]
+    public void Income_AddForm_EndDateBeforeStart_ShowsMessageAndDoesNotCallTheApi()
+    {
+        ArrangeHouseholdWith();
+
+        var cut = Render<IncomePage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='income-add']")));
+
+        cut.Find("[data-testid='income-add']").Click();
+        cut.Find("[data-testid='income-form-name']").Input("Salary");
+
+        // The start date defaults to today, so a far-past end date is always before it.
+        cut.Find("[data-testid='income-form-end']").Change("2000-01-01");
+        cut.Find("[data-testid='income-form-submit']").Click();
+
+        cut.WaitForAssertion(() =>
+            Assert.Contains(IncomePage.EndDateBeforeStartMessage, cut.Markup));
+
+        Assert.Empty(_apiClient.Posts);
+    }
+
+    [Fact]
+    public void Income_IntervalSelector_IsShownAndRequiredOnlyWhenRecurring()
+    {
+        ArrangeHouseholdWith();
+
+        var cut = Render<IncomePage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='income-add']")));
+
+        cut.Find("[data-testid='income-add']").Click();
+        Assert.Empty(cut.FindAll("[data-testid='income-interval']"));
+
+        // Turning recurring on reveals the interval selector.
+        cut.Find("[data-testid='income-recurring-toggle']").Change(true);
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='income-interval']")));
+
+        // A recurring entry with no interval is rejected before any request is sent.
+        cut.Find("[data-testid='income-form-name']").Input("Salary");
+        cut.Find("[data-testid='income-form-submit']").Click();
+        cut.WaitForAssertion(() =>
+            Assert.Contains(IncomePage.IntervalRequiredMessage, cut.Markup));
+        Assert.Empty(_apiClient.Posts);
+
+        // Turning recurring back off hides the selector again.
+        cut.Find("[data-testid='income-recurring-toggle']").Change(false);
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll("[data-testid='income-interval']")));
+    }
+
+    [Fact]
+    public void Income_AddForm_ValidEntry_PostsAndRefreshesTheList()
+    {
+        var household = ArrangeHouseholdWith();
+        var incomesPath = IncomePage.IncomesPathFor(household.Id);
+
+        var cut = Render<IncomePage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='income-add']")));
+
+        cut.Find("[data-testid='income-add']").Click();
+        cut.Find("[data-testid='income-form-name']").Input("Salary");
+        cut.Find("[data-testid='income-form-value']").Change("1500");
+
+        // The save reloads the list from the backend, so make the backend return the new entry.
+        _apiClient.GetResponsesByPath[incomesPath] = new List<Income> { SampleIncome("Salary", 1500.00) };
+
+        cut.Find("[data-testid='income-form-submit']").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal("$1,500.00", cut.Find("[data-testid='income-total']").TextContent.Trim());
+            Assert.Contains(
+                "Salary",
+                cut.FindAll("[data-testid='income-name']").Select(cell => cell.TextContent.Trim()));
+        });
+
+        var post = Assert.Single(_apiClient.Posts);
+        Assert.Equal(incomesPath, post.Path);
+
+        using var body = JsonDocument.Parse(JsonSerializer.Serialize(post.Body, WebJson));
+        Assert.Equal("Salary", body.RootElement.GetProperty("name").GetString());
+        Assert.Equal(1500d, body.RootElement.GetProperty("value").GetDouble());
+        Assert.False(body.RootElement.GetProperty("recurring").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("interval").ValueKind);
+
+        // The list was re-requested after the save, so the total reflects the change.
+        Assert.Equal(2, _apiClient.Gets.Count(path => path == incomesPath));
+    }
+
+    [Fact]
+    public void Income_EditForm_IsPrefilledAndPutsTheChange()
+    {
+        var entry = SampleIncome("Salary", 1500.00);
+        var household = ArrangeHouseholdWith(entry);
+
+        var cut = Render<IncomePage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='income-edit']")));
+
+        cut.Find("[data-testid='income-edit']").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Single(cut.FindAll("[data-testid='income-form']"));
+            Assert.Equal(
+                "Salary",
+                cut.Find("[data-testid='income-form-name']").GetAttribute("value"));
+        });
+
+        cut.Find("[data-testid='income-form-name']").Input("Bonus");
+        cut.Find("[data-testid='income-form-submit']").Click();
+
+        cut.WaitForAssertion(() => Assert.Single(_apiClient.Puts));
+
+        var put = Assert.Single(_apiClient.Puts);
+        Assert.Equal(IncomePage.IncomePathFor(household.Id, entry.Id), put.Path);
+
+        using var body = JsonDocument.Parse(JsonSerializer.Serialize(put.Body, WebJson));
+        Assert.Equal("Bonus", body.RootElement.GetProperty("name").GetString());
+
+        // No create was issued for an edit.
+        Assert.Empty(_apiClient.Posts);
+    }
+
+    [Fact]
+    public void Income_Delete_RemovesTheEntryAndRefreshesTheList()
+    {
+        var entry = SampleIncome("Salary", 1500.00);
+        var household = ArrangeHouseholdWith(entry);
+        var incomesPath = IncomePage.IncomesPathFor(household.Id);
+
+        var cut = Render<IncomePage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='income-delete']")));
+
+        // The delete reloads the list, so make the backend return nothing afterwards.
+        _apiClient.GetResponsesByPath[incomesPath] = new List<Income>();
+
+        cut.Find("[data-testid='income-delete']").Click();
+
+        cut.WaitForAssertion(() =>
+            Assert.Contains(IncomePage.EmptyStateMessage, cut.Markup));
+
+        Assert.Equal(IncomePage.IncomePathFor(household.Id, entry.Id), Assert.Single(_apiClient.Deletes));
+        Assert.Equal(2, _apiClient.Gets.Count(path => path == incomesPath));
+    }
+
+    [Fact]
+    public void Income_SaveFailure_ShowsConventionMessageAndKeepsTheFormOpen()
+    {
+        ArrangeHouseholdWith();
+
+        var cut = Render<IncomePage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='income-add']")));
+
+        cut.Find("[data-testid='income-add']").Click();
+        cut.Find("[data-testid='income-form-name']").Input("Salary");
+
+        _apiClient.Throw = new ClientErrorException(ClientErrorCode.InvalidInput, "Name");
+
+        cut.Find("[data-testid='income-form-submit']").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            var alert = cut.Find("[data-testid='income-operation-error']");
+            Assert.Equal("InvalidInput Name", alert.TextContent.Trim());
+        });
+
+        // The form stays open so the user can correct the input and retry.
+        Assert.Single(cut.FindAll("[data-testid='income-form']"));
     }
 
     /// <summary>

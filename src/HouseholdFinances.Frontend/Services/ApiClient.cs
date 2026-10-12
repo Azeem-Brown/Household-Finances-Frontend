@@ -57,6 +57,10 @@ public sealed class ApiClient : IApiClient
         SendAuthenticatedAsync<TResponse>(HttpMethod.Patch, path, body, cancellationToken);
 
     /// <inheritdoc />
+    public Task<TResponse> PutAsync<TRequest, TResponse>(string path, TRequest body, CancellationToken cancellationToken = default) =>
+        SendAuthenticatedAsync<TResponse>(HttpMethod.Put, path, body, cancellationToken);
+
+    /// <inheritdoc />
     public async Task DeleteAsync(string path, CancellationToken cancellationToken = default)
     {
         using var response = await SendAuthenticatedRawAsync(HttpMethod.Delete, path, body: null, cancellationToken);
