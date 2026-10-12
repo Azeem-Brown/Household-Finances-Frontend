@@ -1,9 +1,163 @@
 @page "/bills"
+@using System.Globalization
+@using HouseholdFinances.Frontend.Models
+@inject IApiClient ApiClient
 
 <PageTitle>Bills | Household Finances</PageTitle>
 
 <PageHeader Title="Bills" Subtitle="Track the bills paid by your household." />
 
-<MudAlert Severity="Severity.Info">
-    This page is a scaffold placeholder. Its functionality is implemented in a later issue.
-</MudAlert>
+@if (_errorMessage is not null)
+{
+    <div data-testid="bills-error">
+        <MudAlert Severity="Severity.Error">@_errorMessage</MudAlert>
+    </div>
+}
+else if (_isLoading)
+{
+    <MudProgressLinear Indeterminate="true" data-testid="bills-loading" />
+}
+else if (_household is null)
+{
+    <MudPaper Class="pa-6" Elevation="1" data-testid="bills-no-household">
+        <MudText Typo="Typo.body1">@NoHouseholdMessage</MudText>
+    </MudPaper>
+}
+else if (IsEmpty)
+{
+    <MudPaper Class="pa-6" Elevation="1" data-testid="bills-empty">
+        <MudText Typo="Typo.h6" GutterBottom="true">No bills yet</MudText>
+        <MudText Typo="Typo.body1" Class="mb-4">@EmptyStateMessage</MudText>
+        @* Creating bills is a separate issue, so the call to action is shown but not yet wired to
+           a route; a caption explains why rather than linking to a page that does not exist. *@
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   Disabled="true"
+                   data-testid="bills-add">
+            Add bill
+        </MudButton>
+        <MudText Typo="Typo.caption" Class="mt-2 mud-text-secondary">@AddBillUnavailableMessage</MudText>
+    </MudPaper>
+}
+else
+{
+    <MudPaper Class="pa-4 mb-4" Elevation="1" data-testid="bills-summary">
+        <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Total bills</MudText>
+        <MudText Typo="Typo.h5"><span data-testid="bills-total">@TotalText</span></MudText>
+    </MudPaper>
+
+    <div data-testid="bills-table">
+        <MudTable T="Bill" Items="_bills" Elevation="1">
+            <HeaderContent>
+                <MudTh>Name</MudTh>
+                <MudTh>Value</MudTh>
+                <MudTh>Starts</MudTh>
+                <MudTh>Ends</MudTh>
+                <MudTh>Recurring</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd data-testid="bills-name">@context.Name</MudTd>
+                <MudTd data-testid="bills-value">@MoneyFormatter.Format(context.Value)</MudTd>
+                <MudTd data-testid="bills-start">@FormatDate(context.StartDate)</MudTd>
+                <MudTd data-testid="bills-end">@FormatDate(context.EndDate)</MudTd>
+                <MudTd data-testid="bills-recurring">@RecurrenceText(context)</MudTd>
+            </RowTemplate>
+        </MudTable>
+    </div>
+}
+
+@code {
+    /// <summary>The authenticated endpoint that lists the current user's households.</summary>
+    public const string HouseholdsPath = "/api/v1/households";
+
+    /// <summary>Guidance shown when the household has no bills yet.</summary>
+    public const string EmptyStateMessage =
+        "Add your first bill to start tracking what your household pays.";
+
+    /// <summary>Guidance shown when the current user has no household to list bills for.</summary>
+    public const string NoHouseholdMessage =
+        "No household was found for your account. Create one before adding bills.";
+
+    /// <summary>
+    /// Explains that the add-bill flow is delivered by a separate issue, so the empty state never
+    /// links to a page that does not exist yet.
+    /// </summary>
+    public const string AddBillUnavailableMessage =
+        "Adding bills is handled in a follow-up issue.";
+
+    private Household? _household;
+    private IReadOnlyList<Bill> _bills = Array.Empty<Bill>();
+    private bool _isLoading = true;
+    private string? _errorMessage;
+
+    /// <summary>
+    /// Builds the bills endpoint for a household. Bills are nested under their household, so the
+    /// household identifier is part of the path.
+    /// </summary>
+    /// <param name="householdId">The household whose bills are listed.</param>
+    /// <returns>The API path for the household's bills.</returns>
+    public static string BillsPathFor(Guid householdId) =>
+        $"/api/v1/households/{householdId}/bills";
+
+    // The empty state is shown only once a household exists but has no bills, so a new user is
+    // guided to add a bill instead of being shown a bare table.
+    private bool IsEmpty => _household is not null && _bills.Count == 0;
+
+    // The summary is the sum of the listed bills, formatted with the decided money rules.
+    private string TotalText => MoneyFormatter.Format(_bills.Sum(bill => bill.Value));
+
+    // ISO 8601 keeps the displayed dates unambiguous and identical regardless of the host locale.
+    private static string FormatDate(DateTime date) =>
+        date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    // A recurring bill shows its cadence when one is recorded; a one-off bill shows "One-off".
+    private static string RecurrenceText(Bill bill) =>
+        !bill.Recurring
+            ? "One-off"
+            : bill.Interval is { } interval
+                ? $"Recurring ({interval})"
+                : "Recurring";
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+
+        try
+        {
+            var households = await ApiClient.GetAsync<IReadOnlyList<Household>>(HouseholdsPath);
+
+            // The backend returns the list ordered by name. Bills are nested under a single
+            // household, so this page takes the same first household the dashboard summarises,
+            // keeping the two pages consistent.
+            _household = households.FirstOrDefault();
+
+            if (_household is null)
+            {
+                _bills = Array.Empty<Bill>();
+                return;
+            }
+
+            _bills = await ApiClient.GetAsync<IReadOnlyList<Bill>>(
+                BillsPathFor(_household.Id));
+        }
+        catch (ClientErrorException exception)
+        {
+            // Every API failure already carries the shared convention message and its significant
+            // identifier (for example "NotFound <id>" when the household is not the user's).
+            _errorMessage = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            // Unexpected failures still surface through the shared convention rather than an
+            // unhandled circuit error or a silent blank page.
+            _errorMessage = ClientErrorFormatter.Format(ClientErrorCode.Unknown, exception.GetType().Name);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+}
