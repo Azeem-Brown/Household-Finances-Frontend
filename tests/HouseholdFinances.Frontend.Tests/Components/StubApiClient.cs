@@ -4,15 +4,24 @@ namespace HouseholdFinances.Frontend.Tests.Components;
 
 /// <summary>
 /// A controllable <see cref="IApiClient"/> test double for component tests. It records the
-/// authenticated POST calls a component makes and lets a test return a response or throw, so the
-/// Setup page can be exercised without a live backend.
+/// authenticated GET and POST calls a component makes and lets a test return a response or throw,
+/// so pages such as Setup and Dashboard can be exercised without a live backend.
 /// </summary>
 internal sealed class StubApiClient : IApiClient
 {
     /// <summary>Gets the authenticated POST calls that were made, in order.</summary>
     public List<RecordedPost> Posts { get; } = new();
 
-    /// <summary>Gets or sets an exception to throw instead of returning a response.</summary>
+    /// <summary>Gets the authenticated GET paths that were requested, in order.</summary>
+    public List<string> Gets { get; } = new();
+
+    /// <summary>Gets or sets the response returned by <see cref="GetAsync{TResponse}"/>.</summary>
+    public object? GetResponse { get; set; }
+
+    /// <summary>
+    /// Gets or sets an exception to throw instead of returning a response from
+    /// <see cref="GetAsync{TResponse}"/> or <see cref="PostAsync{TRequest, TResponse}"/>.
+    /// </summary>
     public Exception? Throw { get; set; }
 
     /// <inheritdoc />
@@ -29,8 +38,14 @@ internal sealed class StubApiClient : IApiClient
     }
 
     /// <inheritdoc />
-    public Task<TResponse> GetAsync<TResponse>(string path, CancellationToken cancellationToken = default) =>
-        throw new NotSupportedException("The Setup page never sends an authenticated GET.");
+    public Task<TResponse> GetAsync<TResponse>(string path, CancellationToken cancellationToken = default)
+    {
+        Gets.Add(path);
+
+        return Throw is null
+            ? Task.FromResult((TResponse)GetResponse!)
+            : Task.FromException<TResponse>(Throw);
+    }
 
     /// <inheritdoc />
     public Task PostAsync<TRequest>(string path, TRequest body, CancellationToken cancellationToken = default) =>

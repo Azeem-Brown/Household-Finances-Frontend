@@ -1,9 +1,122 @@
 @page "/dashboard"
+@using HouseholdFinances.Frontend.Models
+@inject IApiClient ApiClient
 
 <PageTitle>Household Dashboard | Household Finances</PageTitle>
 
 <PageHeader Title="Household Dashboard" Subtitle="An overview of your household finances." />
 
-<MudAlert Severity="Severity.Info">
-    This page is a scaffold placeholder. Its functionality is implemented in a later issue.
-</MudAlert>
+@if (_errorMessage is not null)
+{
+    <div data-testid="dashboard-error">
+        <MudAlert Severity="Severity.Error">@_errorMessage</MudAlert>
+    </div>
+}
+else if (_isLoading)
+{
+    <MudProgressLinear Indeterminate="true" data-testid="dashboard-loading" />
+}
+else if (_household is null)
+{
+    <MudPaper Class="pa-6" Elevation="1" data-testid="dashboard-no-household">
+        <MudText Typo="Typo.body1">@NoHouseholdMessage</MudText>
+    </MudPaper>
+}
+else if (IsEmpty)
+{
+    <MudPaper Class="pa-6" Elevation="1" data-testid="dashboard-empty">
+        <MudText Typo="Typo.h6" GutterBottom="true">Nothing to summarise yet</MudText>
+        <MudText Typo="Typo.body1">@EmptyStateMessage</MudText>
+    </MudPaper>
+}
+else
+{
+    <MudText Typo="Typo.subtitle1" Class="mb-4">@HouseholdName</MudText>
+
+    <MudGrid>
+        <MudItem xs="12" md="4">
+            <MudCard Elevation="1" Class="pa-4 h-100">
+                <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Total income</MudText>
+                <MudText Typo="Typo.h5"><span data-testid="dashboard-income">@IncomeText</span></MudText>
+            </MudCard>
+        </MudItem>
+
+        <MudItem xs="12" md="4">
+            <MudCard Elevation="1" Class="pa-4 h-100">
+                <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Total expenses</MudText>
+                <MudText Typo="Typo.h5"><span data-testid="dashboard-expenses">@ExpensesText</span></MudText>
+            </MudCard>
+        </MudItem>
+
+        <MudItem xs="12" md="4">
+            <MudCard Elevation="1" Class="pa-4 h-100">
+                <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Remaining balance</MudText>
+                <MudText Typo="Typo.h5"><span data-testid="dashboard-balance">@BalanceText</span></MudText>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    /// <summary>The authenticated endpoint that lists the current user's households with their totals.</summary>
+    public const string HouseholdsPath = "/api/v1/households";
+
+    /// <summary>Guidance shown when the household has no income or bill data yet.</summary>
+    public const string EmptyStateMessage =
+        "Add income and bills to see your total income, expenses, and remaining balance.";
+
+    /// <summary>Guidance shown when the current user has no household to summarise.</summary>
+    public const string NoHouseholdMessage =
+        "No household was found for your account. Create one to see your dashboard.";
+
+    private Household? _household;
+    private bool _isLoading = true;
+    private string? _errorMessage;
+
+    // The empty state is shown when there is neither income nor bill data, so a new user is guided
+    // to add entries instead of being shown a bare zero.
+    private bool IsEmpty =>
+        _household is not null && _household.Incomes == 0 && _household.Payments == 0;
+
+    private string HouseholdName => _household?.Name ?? string.Empty;
+
+    private string IncomeText => MoneyFormatter.Format(_household?.Incomes ?? 0);
+
+    private string ExpensesText => MoneyFormatter.Format(_household?.Payments ?? 0);
+
+    private string BalanceText =>
+        MoneyFormatter.Format((_household?.Incomes ?? 0) - (_household?.Payments ?? 0));
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+
+        try
+        {
+            var households = await ApiClient.GetAsync<IReadOnlyList<Household>>(HouseholdsPath);
+
+            // The backend returns the list ordered by name. The dashboard summarises a single
+            // household, so it predicts a stable subject by taking the first one.
+            _household = households.FirstOrDefault();
+        }
+        catch (ClientErrorException exception)
+        {
+            // Every API failure already carries the shared convention message and its significant
+            // identifier (for example "Unauthorized 7").
+            _errorMessage = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            // Unexpected failures still surface through the shared convention rather than an
+            // unhandled circuit error or a silent blank page.
+            _errorMessage = ClientErrorFormatter.Format(ClientErrorCode.Unknown, exception.GetType().Name);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+}
