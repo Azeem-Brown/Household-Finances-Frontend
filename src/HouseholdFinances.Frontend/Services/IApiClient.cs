@@ -53,6 +53,18 @@ public interface IApiClient
     Task<TResponse> PatchAsync<TRequest, TResponse>(string path, TRequest body, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Sends an authenticated PUT with a JSON body and deserializes the JSON response body. Used to
+    /// replace an existing resource, for example <c>PUT /api/v1/households/{householdId}/incomes/{id}</c>.
+    /// </summary>
+    /// <typeparam name="TRequest">The request body type.</typeparam>
+    /// <typeparam name="TResponse">The response body type.</typeparam>
+    /// <param name="path">The API path.</param>
+    /// <param name="body">The request body, serialized as camelCase JSON.</param>
+    /// <param name="cancellationToken">A token to cancel the call.</param>
+    /// <returns>The deserialized response body.</returns>
+    Task<TResponse> PutAsync<TRequest, TResponse>(string path, TRequest body, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Sends an authenticated DELETE that returns no content.
     /// </summary>
     /// <param name="path">The API path.</param>
