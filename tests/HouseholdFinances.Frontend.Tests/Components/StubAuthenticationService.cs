@@ -12,6 +12,9 @@ internal sealed class StubAuthenticationService : IAuthenticationService
     public AuthenticationResult Result { get; set; } =
         AuthenticationResult.Failure(ClientErrorCode.Unknown, "NotConfigured");
 
+    /// <summary>Gets or sets an exception to throw instead of returning a result.</summary>
+    public Exception? Throw { get; set; }
+
     /// <summary>Gets the number of times <see cref="SignInAsync"/> was called.</summary>
     public int CallCount { get; private set; }
 
@@ -19,6 +22,9 @@ internal sealed class StubAuthenticationService : IAuthenticationService
     public Task<AuthenticationResult> SignInAsync(CancellationToken cancellationToken = default)
     {
         CallCount++;
-        return Task.FromResult(Result);
+
+        return Throw is null
+            ? Task.FromResult(Result)
+            : Task.FromException<AuthenticationResult>(Throw);
     }
 }

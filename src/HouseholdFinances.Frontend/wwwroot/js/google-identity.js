@@ -1,12 +1,23 @@
 // Google Identity Services interop for the Blazor Server sign-in flow.
 //
 // The Google ID token can only be obtained in the browser, so this module loads the Google
-// Identity Services script, initializes it with the configured client id, prompts the user, and
-// resolves with the ID token (the credential). The Blazor Server host then exchanges that token
-// for the API-issued pair server to server, so the API tokens never reach the browser.
+// Identity Services script and renders Google's own sign-in button into the page. When the user
+// clicks that button Google invokes the credential callback, which this module resolves with. The
+// Blazor Server host then exchanges that token for the API-issued pair server to server, so the API
+// tokens never reach the browser.
+//
+// The rendered button flow is used instead of the One Tap prompt because the prompt is browser
+// controlled and can be suppressed for reasons the application cannot observe or influence, while
+// the button always starts the flow when the user clicks it. The button flow also removes the
+// reliance on the prompt display-moment notifications (isNotDisplayed, isSkippedMoment,
+// isDismissedMoment), which FedCM no longer populates.
 
 const SCRIPT_ID = "google-identity-services";
 const SCRIPT_SRC = "https://accounts.google.com/gsi/client";
+
+// The container the button is rendered into. Login.razor renders an element with this id, so the id
+// is the contract between the page and this module.
+const BUTTON_CONTAINER_ID = "google-signin-button";
 
 let scriptPromise = null;
 
@@ -47,9 +58,10 @@ function loadScript() {
   return scriptPromise;
 }
 
-// Prompts the user to sign in with Google and resolves with the ID token, or null when the user
-// cancels or the prompt cannot be displayed. It rejects when the interop itself fails, which .NET
-// surfaces as a JSException and reports through the shared client error convention.
+// Renders Google's sign-in button into the Login page container and resolves with the ID token
+// when the user clicks it. It rejects when the script cannot be loaded, the button cannot be
+// rendered, or Google returns no credential, which .NET surfaces as a JSException and reports
+// through the shared client error convention.
 export async function getGoogleIdToken(clientId) {
   if (!clientId) {
     throw new Error("The Google client id is not configured.");
@@ -57,8 +69,18 @@ export async function getGoogleIdToken(clientId) {
 
   await loadScript();
 
-  if (!window.google || !window.google.accounts || !window.google.accounts.id) {
+  if (
+    !window.google ||
+    !window.google.accounts ||
+    !window.google.accounts.id ||
+    typeof window.google.accounts.id.renderButton !== "function"
+  ) {
     throw new Error("Google Identity Services is unavailable.");
+  }
+
+  const container = document.getElementById(BUTTON_CONTAINER_ID);
+  if (!container) {
+    throw new Error("The Google sign-in button container is not present on the page.");
   }
 
   return await new Promise((resolve, reject) => {
@@ -78,6 +100,9 @@ export async function getGoogleIdToken(clientId) {
       }
     };
 
+    // Only the client id and the credential callback are needed for the button flow. The prompt
+    // options (cancel_on_tap_outside, use_fedcm_for_prompt) are deliberately not set: the button
+    // does not use the One Tap prompt or its display-moment notifications.
     window.google.accounts.id.initialize({
       client_id: clientId,
       callback: (response) => {
@@ -87,27 +112,23 @@ export async function getGoogleIdToken(clientId) {
           fail(new Error("Google sign-in returned no credential."));
         }
       },
-      cancel_on_tap_outside: false,
-      use_fedcm_for_prompt: true,
     });
 
-    window.google.accounts.id.prompt((notification) => {
-      if (!notification) {
-        return;
-      }
-
-      try {
-        const canceled =
-          (notification.isNotDisplayed && notification.isNotDisplayed()) ||
-          (notification.isSkippedMoment && notification.isSkippedMoment()) ||
-          (notification.isDismissedMoment && notification.isDismissedMoment());
-
-        if (canceled) {
-          settle(null);
-        }
-      } catch {
-        // Ignore notification inspection failures; the credential callback governs success.
-      }
-    });
+    try {
+      window.google.accounts.id.renderButton(container, {
+        type: "standard",
+        theme: "outline",
+        size: "large",
+        text: "signin_with",
+        shape: "rectangular",
+        logo_alignment: "left",
+      });
+    } catch (error) {
+      fail(
+        error instanceof Error
+          ? error
+          : new Error("The Google sign-in button could not be rendered."),
+      );
+    }
   });
 }

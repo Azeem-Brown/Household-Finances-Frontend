@@ -5,15 +5,15 @@ namespace HouseholdFinances.Frontend.Services;
 /// </summary>
 /// <remarks>
 /// The Google ID token can only be obtained in the browser, so this is a JavaScript interop
-/// boundary: the Blazor Server host loads Google Identity Services in the user's browser and hands
-/// the resulting credential back to .NET, which then performs the token exchange server to server.
-/// Keeping this a small interface lets the sign-in flow be tested without a browser or any real
-/// Google credentials.
+/// boundary: the Blazor Server host renders Google's own sign-in button in the user's browser and
+/// hands the resulting credential back to .NET, which then performs the token exchange server to
+/// server. Keeping this a small interface lets the sign-in flow be tested without a browser or any
+/// real Google credentials.
 /// </remarks>
 public interface IGoogleIdentityProvider
 {
     /// <summary>
-    /// Prompts the user to sign in with Google and returns the resulting ID token.
+    /// Renders Google's sign-in button and returns the ID token produced when the user clicks it.
     /// </summary>
     /// <param name="clientId">
     /// The Google OAuth client id to initialize Google Identity Services with; it must match the
@@ -22,12 +22,12 @@ public interface IGoogleIdentityProvider
     /// <param name="cancellationToken">A token to cancel the interaction.</param>
     /// <returns>
     /// The Google ID token (the credential) when the user completes sign-in, or <see langword="null"/>
-    /// when the user cancels or the prompt is not displayed.
+    /// when no credential is produced.
     /// </returns>
     /// <exception cref="Microsoft.JSInterop.JSException">
-    /// The Google Identity Services script or module could not be loaded, or the browser interaction
-    /// failed. This represents an unavailable prompt, reported by the caller through the shared
-    /// client error convention.
+    /// The Google Identity Services script or module could not be loaded, the sign-in button could
+    /// not be rendered, or the browser interaction failed. This represents an unavailable sign-in
+    /// prompt, reported by the caller through the shared client error convention.
     /// </exception>
     Task<string?> GetIdTokenAsync(string clientId, CancellationToken cancellationToken = default);
 }
