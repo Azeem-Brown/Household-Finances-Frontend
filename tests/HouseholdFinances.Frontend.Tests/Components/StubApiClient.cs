@@ -4,9 +4,9 @@ namespace HouseholdFinances.Frontend.Tests.Components;
 
 /// <summary>
 /// A controllable <see cref="IApiClient"/> test double for component tests. It records the
-/// authenticated GET, POST, PUT, and DELETE calls a component makes and lets a test return a
-/// response or throw, so pages such as Setup, Dashboard, and Income can be exercised without a
-/// live backend.
+/// authenticated GET, POST, PUT, PATCH, and DELETE calls a component makes and lets a test return a
+/// response or throw, so pages such as Setup, Dashboard, Income, and Profile can be exercised
+/// without a live backend.
 /// </summary>
 internal sealed class StubApiClient : IApiClient
 {
@@ -15,6 +15,9 @@ internal sealed class StubApiClient : IApiClient
 
     /// <summary>Gets the authenticated PUT calls that were made, in order.</summary>
     public List<RecordedPost> Puts { get; } = new();
+
+    /// <summary>Gets the authenticated PATCH calls that were made, in order.</summary>
+    public List<RecordedPost> Patches { get; } = new();
 
     /// <summary>Gets the authenticated DELETE paths that were requested, in order.</summary>
     public List<string> Deletes { get; } = new();
@@ -61,6 +64,33 @@ internal sealed class StubApiClient : IApiClient
     /// </summary>
     public Dictionary<string, Exception> ThrowByPathForDelete { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Gets or sets the response returned by <see cref="PatchAsync{TRequest, TResponse}"/> when no
+    /// path-specific response is registered in <see cref="PatchResponsesByPath"/>. This is kept
+    /// separate from <see cref="GetResponse"/> so a page can load over GET and save over PATCH with
+    /// different payloads.
+    /// </summary>
+    public object? PatchResponse { get; set; }
+
+    /// <summary>
+    /// Gets per-path responses for <see cref="PatchAsync{TRequest, TResponse}"/>. A path registered
+    /// here takes precedence over <see cref="PatchResponse"/>.
+    /// </summary>
+    public Dictionary<string, object?> PatchResponsesByPath { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Gets or sets an exception for <see cref="PatchAsync{TRequest, TResponse}"/>, so a save can
+    /// fail while the initial GET still succeeds. Unlike <see cref="Throw"/> it does not affect
+    /// other verbs.
+    /// </summary>
+    public Exception? ThrowForPatch { get; set; }
+
+    /// <summary>
+    /// Gets per-path exceptions for <see cref="PatchAsync{TRequest, TResponse}"/>. A path registered
+    /// here takes precedence over <see cref="ThrowForPatch"/>.
+    /// </summary>
+    public Dictionary<string, Exception> ThrowByPathForPatch { get; } = new(StringComparer.Ordinal);
+
     /// <inheritdoc />
     public Task<TResponse> PostAsync<TRequest, TResponse>(
         string path,
@@ -102,8 +132,24 @@ internal sealed class StubApiClient : IApiClient
     public Task<TResponse> PatchAsync<TRequest, TResponse>(
         string path,
         TRequest body,
-        CancellationToken cancellationToken = default) =>
-        throw new NotSupportedException("The Setup page never sends a PATCH.");
+        CancellationToken cancellationToken = default)
+    {
+        Patches.Add(new RecordedPost(path, body));
+
+        if (ThrowByPathForPatch.TryGetValue(path, out var pathThrow))
+        {
+            return Task.FromException<TResponse>(pathThrow);
+        }
+
+        if (ThrowForPatch is not null)
+        {
+            return Task.FromException<TResponse>(ThrowForPatch);
+        }
+
+        var response = PatchResponsesByPath.TryGetValue(path, out var mapped) ? mapped : PatchResponse;
+
+        return Task.FromResult((TResponse)response!);
+    }
 
     /// <inheritdoc />
     public Task<TResponse> PutAsync<TRequest, TResponse>(
@@ -143,7 +189,7 @@ internal sealed class StubApiClient : IApiClient
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException("The Setup page never sends an anonymous POST.");
 
-    /// <summary>A recorded authenticated POST or PUT call.</summary>
+    /// <summary>A recorded authenticated POST, PUT, or PATCH call.</summary>
     /// <param name="Path">The API path the call targeted.</param>
     /// <param name="Body">The request body, kept as its declared type for inspection.</param>
     internal sealed record RecordedPost(string Path, object? Body);
