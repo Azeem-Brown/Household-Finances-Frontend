@@ -19,7 +19,7 @@ namespace HouseholdFinances.Frontend.Tests.Components;
 /// rules, and shows guidance or an error; they do not prove the real backend returns the totals or
 /// that a browser renders the page.
 /// </remarks>
-public class DashboardPageTests : BunitContext
+public class DashboardPageTests : BunitContext, IAsyncLifetime
 {
     private readonly StubApiClient _apiClient = new();
 
@@ -30,6 +30,13 @@ public class DashboardPageTests : BunitContext
         Services.AddMudServices();
         Services.AddSingleton<IApiClient>(_apiClient);
     }
+
+    // The allocation panel renders MudBlazor inputs that resolve services which only implement
+    // IAsyncDisposable, so the context must be disposed asynchronously. xUnit routes teardown
+    // through IAsyncLifetime instead of the synchronous IDisposable.Dispose when it is implemented.
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    async Task IAsyncLifetime.DisposeAsync() => await ((IAsyncDisposable)this).DisposeAsync();
 
     [Fact]
     public void Dashboard_Populated_RendersFormattedIncomeExpensesAndBalance()
@@ -162,5 +169,124 @@ public class DashboardPageTests : BunitContext
             var alert = cut.Find("[data-testid='dashboard-error']");
             Assert.Equal("Unknown InvalidOperationException", alert.TextContent.Trim());
         });
+    }
+
+    [Fact]
+    public void Dashboard_ValidAllocation_ShowsAllocationAndUnallocatedRemainder()
+    {
+        _apiClient.GetResponse = new List<Household>
+        {
+            new() { Id = Guid.NewGuid(), Name = "Family", Incomes = 5000, Payments = 3000 }
+        };
+
+        var cut = Render<Dashboard>();
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='dashboard-allocation']")));
+
+        cut.Find("[data-testid='dashboard-allocation-savings']").Change("800");
+        cut.Find("[data-testid='dashboard-allocation-fun']").Change("700");
+        cut.Find("[data-testid='dashboard-allocation-submit']").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal("$800.00", cut.Find("[data-testid='dashboard-allocation-savings-value']").TextContent.Trim());
+            Assert.Equal("$700.00", cut.Find("[data-testid='dashboard-allocation-fun-value']").TextContent.Trim());
+            // 2000 remaining - 800 savings - 700 fun money leaves 500 unallocated.
+            Assert.Equal("$500.00", cut.Find("[data-testid='dashboard-allocation-remainder']").TextContent.Trim());
+        });
+    }
+
+    [Fact]
+    public void Dashboard_AllocationMatchingTheBalance_LeavesNoRemainder()
+    {
+        _apiClient.GetResponse = new List<Household>
+        {
+            new() { Id = Guid.NewGuid(), Name = "Family", Incomes = 2000, Payments = 500 }
+        };
+
+        var cut = Render<Dashboard>();
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='dashboard-allocation']")));
+
+        // The split equals the whole remaining balance (1500), which is allowed.
+        cut.Find("[data-testid='dashboard-allocation-savings']").Change("1000");
+        cut.Find("[data-testid='dashboard-allocation-fun']").Change("500");
+        cut.Find("[data-testid='dashboard-allocation-submit']").Click();
+
+        cut.WaitForAssertion(() =>
+            Assert.Equal("$0.00", cut.Find("[data-testid='dashboard-allocation-remainder']").TextContent.Trim()));
+    }
+
+    [Fact]
+    public void Dashboard_OverAllocation_ShowsMessageAndKeepsTheSummaryIntact()
+    {
+        _apiClient.GetResponse = new List<Household>
+        {
+            new() { Id = Guid.NewGuid(), Name = "Family", Incomes = 5000, Payments = 3000 }
+        };
+
+        var cut = Render<Dashboard>();
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='dashboard-allocation']")));
+
+        // 1500 + 1000 exceeds the 2000 remaining balance.
+        cut.Find("[data-testid='dashboard-allocation-savings']").Change("1500");
+        cut.Find("[data-testid='dashboard-allocation-fun']").Change("1000");
+        cut.Find("[data-testid='dashboard-allocation-submit']").Click();
+
+        cut.WaitForAssertion(() => Assert.Contains(
+            Dashboard.AllocationExceedsBalanceMessage,
+            cut.Find("[data-testid='dashboard-allocation-error']").TextContent));
+
+        // The rejected split is not displayed, and the summary still renders without a crash.
+        Assert.Empty(cut.FindAll("[data-testid='dashboard-allocation-result']"));
+        Assert.Equal("$2,000.00", cut.Find("[data-testid='dashboard-balance']").TextContent.Trim());
+    }
+
+    [Fact]
+    public void Dashboard_NegativeAllocation_ShowsMessageAndIsNotDisplayed()
+    {
+        _apiClient.GetResponse = new List<Household>
+        {
+            new() { Id = Guid.NewGuid(), Name = "Family", Incomes = 5000, Payments = 3000 }
+        };
+
+        var cut = Render<Dashboard>();
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='dashboard-allocation']")));
+
+        cut.Find("[data-testid='dashboard-allocation-savings']").Change("-5");
+        cut.Find("[data-testid='dashboard-allocation-submit']").Click();
+
+        cut.WaitForAssertion(() => Assert.Contains(Dashboard.NegativeAmountMessage, cut.Markup));
+
+        Assert.Empty(cut.FindAll("[data-testid='dashboard-allocation-result']"));
+    }
+
+    [Fact]
+    public void Dashboard_Allocation_IsSessionOnlyAndMakesNoApiWrite()
+    {
+        _apiClient.GetResponse = new List<Household>
+        {
+            new() { Id = Guid.NewGuid(), Name = "Family", Incomes = 5000, Payments = 3000 }
+        };
+
+        var cut = Render<Dashboard>();
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='dashboard-allocation']")));
+
+        cut.Find("[data-testid='dashboard-allocation-savings']").Change("800");
+        cut.Find("[data-testid='dashboard-allocation-fun']").Change("700");
+        cut.Find("[data-testid='dashboard-allocation-submit']").Click();
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='dashboard-allocation-result']")));
+
+        // The split is session-only page state: accepting it makes no API write, and the only
+        // request the page ever makes is the initial household load.
+        Assert.Empty(_apiClient.Posts);
+        Assert.Empty(_apiClient.Puts);
+        Assert.Empty(_apiClient.Patches);
+        Assert.Empty(_apiClient.Deletes);
+        Assert.Equal(Dashboard.HouseholdsPath, Assert.Single(_apiClient.Gets));
     }
 }
