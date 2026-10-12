@@ -1,4 +1,5 @@
 @page "/dashboard"
+@using System.Globalization
 @using HouseholdFinances.Frontend.Models
 @inject IApiClient ApiClient
 
@@ -55,6 +56,70 @@ else
             </MudCard>
         </MudItem>
     </MudGrid>
+
+    <MudPaper Class="pa-4 mt-4" Elevation="1" data-testid="dashboard-allocation">
+        <MudText Typo="Typo.h6" GutterBottom="true">Split your remaining balance</MudText>
+        <MudText Typo="Typo.body2" Class="mb-4">@AllocationHintMessage</MudText>
+
+        @if (_allocationErrorMessage is not null)
+        {
+            <div data-testid="dashboard-allocation-error">
+                <MudAlert Severity="Severity.Error" Class="mb-4">@_allocationErrorMessage</MudAlert>
+            </div>
+        }
+
+        <MudGrid>
+            <MudItem xs="12" md="6">
+                <MudNumericField T="double"
+                                 @bind-Value="_savings"
+                                 Label="Savings"
+                                 Variant="Variant.Outlined"
+                                 Culture="@CultureInfo.InvariantCulture"
+                                 Error="_savingsError is not null"
+                                 ErrorText="@_savingsError"
+                                 data-testid="dashboard-allocation-savings" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudNumericField T="double"
+                                 @bind-Value="_funMoney"
+                                 Label="Fun money"
+                                 Variant="Variant.Outlined"
+                                 Culture="@CultureInfo.InvariantCulture"
+                                 Error="_funMoneyError is not null"
+                                 ErrorText="@_funMoneyError"
+                                 data-testid="dashboard-allocation-fun" />
+            </MudItem>
+        </MudGrid>
+
+        <div class="d-flex mt-4">
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       OnClick="Allocate"
+                       data-testid="dashboard-allocation-submit">
+                Allocate
+            </MudButton>
+        </div>
+
+        @if (_allocation is { } allocation)
+        {
+            <div data-testid="dashboard-allocation-result">
+                <MudGrid Class="mt-4">
+                    <MudItem xs="12" md="4">
+                        <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Allocated to savings</MudText>
+                        <MudText Typo="Typo.h6"><span data-testid="dashboard-allocation-savings-value">@MoneyFormatter.Format(allocation.Savings)</span></MudText>
+                    </MudItem>
+                    <MudItem xs="12" md="4">
+                        <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Allocated to fun money</MudText>
+                        <MudText Typo="Typo.h6"><span data-testid="dashboard-allocation-fun-value">@MoneyFormatter.Format(allocation.FunMoney)</span></MudText>
+                    </MudItem>
+                    <MudItem xs="12" md="4">
+                        <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Unallocated remainder</MudText>
+                        <MudText Typo="Typo.h6"><span data-testid="dashboard-allocation-remainder">@UnallocatedText</span></MudText>
+                    </MudItem>
+                </MudGrid>
+            </div>
+        }
+    </MudPaper>
 }
 
 @code {
@@ -69,9 +134,34 @@ else
     public const string NoHouseholdMessage =
         "No household was found for your account. Create one to see your dashboard.";
 
+    /// <summary>Guidance shown above the savings and fun-money allocation inputs.</summary>
+    public const string AllocationHintMessage =
+        "Choose how much of the remaining balance goes to savings and fun money. "
+        + "This split is not saved and resets when you reload or leave the dashboard.";
+
+    /// <summary>Client-side message shown when an allocated amount is negative.</summary>
+    public const string NegativeAmountMessage = "Enter an amount of zero or more.";
+
+    /// <summary>
+    /// Client-side message shown when the savings and fun-money split is larger than the remaining
+    /// balance.
+    /// </summary>
+    public const string AllocationExceedsBalanceMessage =
+        "Savings plus fun money cannot be more than the remaining balance.";
+
     private Household? _household;
     private bool _isLoading = true;
     private string? _errorMessage;
+
+    // Allocation is session-only page state (see the decision recorded on issue #16): the split is
+    // held in memory here and never sent to the API, so it does not persist and resets when the
+    // page is reloaded or the user navigates away from the dashboard.
+    private double _savings;
+    private double _funMoney;
+    private string? _savingsError;
+    private string? _funMoneyError;
+    private string? _allocationErrorMessage;
+    private (double Savings, double FunMoney)? _allocation;
 
     // The empty state is shown when there is neither income nor bill data, so a new user is guided
     // to add entries instead of being shown a bare zero.
@@ -84,8 +174,44 @@ else
 
     private string ExpensesText => MoneyFormatter.Format(_household?.Payments ?? 0);
 
-    private string BalanceText =>
-        MoneyFormatter.Format((_household?.Incomes ?? 0) - (_household?.Payments ?? 0));
+    private string BalanceText => MoneyFormatter.Format(RemainingBalance);
+
+    // The raw remaining balance the allocation is validated against, before any formatting.
+    private double RemainingBalance => (_household?.Incomes ?? 0) - (_household?.Payments ?? 0);
+
+    // What is left of the remaining balance after the accepted split; only meaningful once a split
+    // has been accepted, which is the only time it is shown.
+    private string UnallocatedText =>
+        _allocation is { } allocation
+            ? MoneyFormatter.Format(RemainingBalance - allocation.Savings - allocation.FunMoney)
+            : MoneyFormatter.Format(RemainingBalance);
+
+    // Client-side validation mirrors the issue's rules: each amount must be non-negative and the
+    // two amounts together must not exceed the remaining balance. Amounts are rounded to the decided
+    // money precision first so validation and display agree on the same value.
+    private void Allocate()
+    {
+        _savingsError = null;
+        _funMoneyError = null;
+        _allocationErrorMessage = null;
+
+        var savings = MoneyFormatter.Round(_savings);
+        var funMoney = MoneyFormatter.Round(_funMoney);
+
+        _savingsError = savings < 0 ? NegativeAmountMessage : null;
+        _funMoneyError = funMoney < 0 ? NegativeAmountMessage : null;
+
+        if (_savingsError is null && _funMoneyError is null && savings + funMoney > RemainingBalance)
+        {
+            _allocationErrorMessage = AllocationExceedsBalanceMessage;
+        }
+
+        // A rejected split clears any previously accepted one, so the page never shows a stale
+        // result next to a fresh error.
+        _allocation = _savingsError is null && _funMoneyError is null && _allocationErrorMessage is null
+            ? (savings, funMoney)
+            : null;
+    }
 
     protected override Task OnInitializedAsync() => LoadAsync();
 
