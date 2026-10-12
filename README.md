@@ -41,11 +41,21 @@ browser). To run it locally:
    It must match the client id the backend validates the token audience against
    (`Authentication:Google:ClientId` in the backend).
 
-2. Run the backend API first (see the backend README) so the frontend has an API to exchange the
+2. Register the development origin with the Google OAuth client. In the Google Cloud console, add
+   the origin the browser will use to the client's **Authorized JavaScript origins**:
+
+   - `http://localhost:5033` (the `http` launch profile)
+   - `https://localhost:7073` (the `https` launch profile)
+
+   Google matches the origin exactly, including scheme and port, so `http://localhost:5033` and
+   `https://localhost:7073` are different origins as far as Google is concerned. Register both if
+   you use both profiles.
+
+3. Run the backend API first (see the backend README) so the frontend has an API to exchange the
    token with and to read the current user profile from. The frontend reads the API base URL from
    `Api:BaseUrl` (`appsettings.json`, default `http://localhost:5252`).
 
-3. Run the frontend and click "Sign in with Google" on `/login`. A user with no household is routed
+4. Run the frontend and click "Sign in with Google" on `/login`. A user with no household is routed
    to `/setup`; a user with at least one household is routed to `/dashboard`.
 
 For local testing without real Google credentials, the backend registers a development-only Google
@@ -54,6 +64,18 @@ token validator that accepts a locally generated token prefixed with `dev:` (for
 backend issue #24 tightens it to require an explicit opt-in - see the backend README for how it is
 currently enabled. It exercises the API directly; the frontend button still uses real Google
 Identity Services and therefore needs a configured client id.
+
+### Troubleshooting sign-in
+
+If sign-in fails and no request reaches the API, the page origin is most likely not registered with
+the Google OAuth client. Google Identity Services rejects the request in the browser, so nothing is
+sent to the backend and the failure looks like an application bug. The browser console shows one of:
+
+- `FedCM get() rejects with NetworkError: Error retrieving a token.`
+- an origin-not-allowed message naming the unregistered origin
+
+Register the exact origin the browser address bar is on (scheme and port included) under
+**Authorized JavaScript origins** for the client, as described in step 2.
 
 ## Branching
 
