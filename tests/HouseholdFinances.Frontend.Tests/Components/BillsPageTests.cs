@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Bunit;
 using HouseholdFinances.Frontend.Models;
 using HouseholdFinances.Frontend.Services;
@@ -19,8 +20,10 @@ namespace HouseholdFinances.Frontend.Tests.Components;
 /// the bills and total with the decided money rules, and shows guidance or an error. They do not
 /// prove the real backend returns the bills or that a browser renders the page.
 /// </remarks>
-public class BillsPageTests : BunitContext
+public class BillsPageTests : BunitContext, IAsyncLifetime
 {
+    private static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web);
+
     private readonly StubApiClient _apiClient = new();
 
     public BillsPageTests()
@@ -30,6 +33,13 @@ public class BillsPageTests : BunitContext
         Services.AddMudServices();
         Services.AddSingleton<IApiClient>(_apiClient);
     }
+
+    // The create/edit form renders MudBlazor inputs that resolve services which only implement
+    // IAsyncDisposable, so the context must be disposed asynchronously. xUnit routes teardown
+    // through IAsyncLifetime instead of the synchronous IDisposable.Dispose when it is implemented.
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    async Task IAsyncLifetime.DisposeAsync() => await ((IAsyncDisposable)this).DisposeAsync();
 
     [Fact]
     public void Bills_Populated_RendersEachBillWithItsLabelAndValue()
@@ -209,6 +219,229 @@ public class BillsPageTests : BunitContext
             var alert = cut.Find("[data-testid='bills-error']");
             Assert.Equal("Unknown InvalidOperationException", alert.TextContent.Trim());
         });
+    }
+
+    [Fact]
+    public void Bills_AddForm_IsHiddenUntilAddIsChosenAndStartsWithNoIntervalSelector()
+    {
+        ArrangeHouseholdWith(SampleBill("Rent", 1200.00));
+
+        var cut = Render<BillsPage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='bills-table']")));
+
+        Assert.Empty(cut.FindAll("[data-testid='bills-form']"));
+
+        cut.Find("[data-testid='bills-add']").Click();
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='bills-form']")));
+
+        // A new bill is one-off by default, so the interval selector is not shown.
+        Assert.Empty(cut.FindAll("[data-testid='bills-interval']"));
+    }
+
+    [Fact]
+    public void Bills_AddForm_EmptyName_ShowsRequiredMessageAndDoesNotCallTheApi()
+    {
+        ArrangeHouseholdWith();
+
+        var cut = Render<BillsPage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='bills-add']")));
+
+        cut.Find("[data-testid='bills-add']").Click();
+        cut.Find("[data-testid='bills-form-submit']").Click();
+
+        cut.WaitForAssertion(() =>
+            Assert.Contains(BillsPage.NameRequiredMessage, cut.Markup));
+
+        Assert.Empty(_apiClient.Posts);
+        Assert.Single(cut.FindAll("[data-testid='bills-form']"));
+    }
+
+    [Fact]
+    public void Bills_AddForm_NegativeValue_ShowsMessageAndDoesNotCallTheApi()
+    {
+        ArrangeHouseholdWith();
+
+        var cut = Render<BillsPage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='bills-add']")));
+
+        cut.Find("[data-testid='bills-add']").Click();
+        cut.Find("[data-testid='bills-form-name']").Input("Rent");
+        cut.Find("[data-testid='bills-form-value']").Change("-5");
+        cut.Find("[data-testid='bills-form-submit']").Click();
+
+        cut.WaitForAssertion(() =>
+            Assert.Contains(BillsPage.ValueNegativeMessage, cut.Markup));
+
+        Assert.Empty(_apiClient.Posts);
+    }
+
+    [Fact]
+    public void Bills_AddForm_EndDateBeforeStart_ShowsMessageAndDoesNotCallTheApi()
+    {
+        ArrangeHouseholdWith();
+
+        var cut = Render<BillsPage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='bills-add']")));
+
+        cut.Find("[data-testid='bills-add']").Click();
+        cut.Find("[data-testid='bills-form-name']").Input("Rent");
+
+        // The start date defaults to today, so a far-past end date is always before it.
+        cut.Find("[data-testid='bills-form-end']").Change("2000-01-01");
+        cut.Find("[data-testid='bills-form-submit']").Click();
+
+        cut.WaitForAssertion(() =>
+            Assert.Contains(BillsPage.EndDateBeforeStartMessage, cut.Markup));
+
+        Assert.Empty(_apiClient.Posts);
+    }
+
+    [Fact]
+    public void Bills_IntervalSelector_IsShownAndRequiredOnlyWhenRecurring()
+    {
+        ArrangeHouseholdWith();
+
+        var cut = Render<BillsPage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='bills-add']")));
+
+        cut.Find("[data-testid='bills-add']").Click();
+        Assert.Empty(cut.FindAll("[data-testid='bills-interval']"));
+
+        // Turning recurring on reveals the interval selector.
+        cut.Find("[data-testid='bills-recurring-toggle']").Change(true);
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='bills-interval']")));
+
+        // A recurring bill with no interval is rejected before any request is sent.
+        cut.Find("[data-testid='bills-form-name']").Input("Rent");
+        cut.Find("[data-testid='bills-form-submit']").Click();
+        cut.WaitForAssertion(() =>
+            Assert.Contains(BillsPage.IntervalRequiredMessage, cut.Markup));
+        Assert.Empty(_apiClient.Posts);
+
+        // Turning recurring back off hides the selector again.
+        cut.Find("[data-testid='bills-recurring-toggle']").Change(false);
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll("[data-testid='bills-interval']")));
+    }
+
+    [Fact]
+    public void Bills_AddForm_ValidEntry_PostsAndRefreshesTheList()
+    {
+        var household = ArrangeHouseholdWith();
+        var billsPath = BillsPage.BillsPathFor(household.Id);
+
+        var cut = Render<BillsPage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='bills-add']")));
+
+        cut.Find("[data-testid='bills-add']").Click();
+        cut.Find("[data-testid='bills-form-name']").Input("Rent");
+        cut.Find("[data-testid='bills-form-value']").Change("1200");
+
+        // The save reloads the list from the backend, so make the backend return the new bill.
+        _apiClient.GetResponsesByPath[billsPath] = new List<Bill> { SampleBill("Rent", 1200.00) };
+
+        cut.Find("[data-testid='bills-form-submit']").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal("$1,200.00", cut.Find("[data-testid='bills-total']").TextContent.Trim());
+            Assert.Contains(
+                "Rent",
+                cut.FindAll("[data-testid='bills-name']").Select(cell => cell.TextContent.Trim()));
+        });
+
+        var post = Assert.Single(_apiClient.Posts);
+        Assert.Equal(billsPath, post.Path);
+
+        using var body = JsonDocument.Parse(JsonSerializer.Serialize(post.Body, WebJson));
+        Assert.Equal("Rent", body.RootElement.GetProperty("name").GetString());
+        Assert.Equal(1200d, body.RootElement.GetProperty("value").GetDouble());
+        Assert.False(body.RootElement.GetProperty("recurring").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("interval").ValueKind);
+
+        // The list was re-requested after the save, so the total reflects the change.
+        Assert.Equal(2, _apiClient.Gets.Count(path => path == billsPath));
+    }
+
+    [Fact]
+    public void Bills_EditForm_IsPrefilledAndPutsTheChange()
+    {
+        var bill = SampleBill("Rent", 1200.00);
+        var household = ArrangeHouseholdWith(bill);
+
+        var cut = Render<BillsPage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='bills-edit']")));
+
+        cut.Find("[data-testid='bills-edit']").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Single(cut.FindAll("[data-testid='bills-form']"));
+            Assert.Equal(
+                "Rent",
+                cut.Find("[data-testid='bills-form-name']").GetAttribute("value"));
+        });
+
+        cut.Find("[data-testid='bills-form-name']").Input("Mortgage");
+        cut.Find("[data-testid='bills-form-submit']").Click();
+
+        cut.WaitForAssertion(() => Assert.Single(_apiClient.Puts));
+
+        var put = Assert.Single(_apiClient.Puts);
+        Assert.Equal(BillsPage.BillPathFor(household.Id, bill.Id), put.Path);
+
+        using var body = JsonDocument.Parse(JsonSerializer.Serialize(put.Body, WebJson));
+        Assert.Equal("Mortgage", body.RootElement.GetProperty("name").GetString());
+
+        // No create was issued for an edit.
+        Assert.Empty(_apiClient.Posts);
+    }
+
+    [Fact]
+    public void Bills_Delete_RemovesTheBillAndRefreshesTheList()
+    {
+        var bill = SampleBill("Rent", 1200.00);
+        var household = ArrangeHouseholdWith(bill);
+        var billsPath = BillsPage.BillsPathFor(household.Id);
+
+        var cut = Render<BillsPage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='bills-delete']")));
+
+        // The delete reloads the list, so make the backend return nothing afterwards.
+        _apiClient.GetResponsesByPath[billsPath] = new List<Bill>();
+
+        cut.Find("[data-testid='bills-delete']").Click();
+
+        cut.WaitForAssertion(() =>
+            Assert.Contains(BillsPage.EmptyStateMessage, cut.Markup));
+
+        Assert.Equal(BillsPage.BillPathFor(household.Id, bill.Id), Assert.Single(_apiClient.Deletes));
+        Assert.Equal(2, _apiClient.Gets.Count(path => path == billsPath));
+    }
+
+    [Fact]
+    public void Bills_SaveFailure_ShowsConventionMessageAndKeepsTheFormOpen()
+    {
+        ArrangeHouseholdWith();
+
+        var cut = Render<BillsPage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='bills-add']")));
+
+        cut.Find("[data-testid='bills-add']").Click();
+        cut.Find("[data-testid='bills-form-name']").Input("Rent");
+
+        _apiClient.Throw = new ClientErrorException(ClientErrorCode.InvalidInput, "Name");
+
+        cut.Find("[data-testid='bills-form-submit']").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            var alert = cut.Find("[data-testid='bills-operation-error']");
+            Assert.Equal("InvalidInput Name", alert.TextContent.Trim());
+        });
+
+        // The form stays open so the user can correct the input and retry.
+        Assert.Single(cut.FindAll("[data-testid='bills-form']"));
     }
 
     /// <summary>
