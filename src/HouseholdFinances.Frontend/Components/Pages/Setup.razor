@@ -1,9 +1,117 @@
 @page "/setup"
+@using HouseholdFinances.Frontend.Models
+@inject IApiClient ApiClient
+@inject NavigationManager Navigation
 
 <PageTitle>Setup | Household Finances</PageTitle>
 
-<PageHeader Title="Setup" Subtitle="Configure your household." />
+<PageHeader Title="Setup" Subtitle="Name your household to get started." />
 
-<MudAlert Severity="Severity.Info">
-    This page is a scaffold placeholder. Its functionality is implemented in a later issue.
-</MudAlert>
+<MudPaper Class="pa-6" Elevation="1" Style="max-width: 30rem;">
+    <MudText Typo="Typo.body1" Class="mb-4">
+        Create your household. You become its first member, and you reach your dashboard once it
+        exists.
+    </MudText>
+
+    <MudTextField @bind-Value="_name"
+                  @bind-Value:after="OnNameChanged"
+                  Label="Household name"
+                  Variant="Variant.Outlined"
+                  Immediate="true"
+                  Error="_nameError is not null"
+                  ErrorText="@_nameError"
+                  data-testid="setup-name" />
+
+    @if (_errorMessage is not null)
+    {
+        <div data-testid="setup-error">
+            <MudAlert Severity="Severity.Error" Class="mt-4">@_errorMessage</MudAlert>
+        </div>
+    }
+
+    <MudButton Variant="Variant.Filled"
+               Color="Color.Primary"
+               Class="mt-4"
+               Disabled="_isSubmitting"
+               OnClick="CreateHouseholdAsync"
+               data-testid="setup-submit">
+        Create household
+    </MudButton>
+</MudPaper>
+
+@code {
+    /// <summary>The authenticated endpoint that creates a household and the caller's membership.</summary>
+    public const string HouseholdsPath = "/api/v1/households";
+
+    /// <summary>The route reached once the household exists.</summary>
+    public const string DashboardPath = "/dashboard";
+
+    /// <summary>Client-side message shown when the name is empty or whitespace only.</summary>
+    public const string NameRequiredMessage = "Enter a household name.";
+
+    private string? _name;
+    private string? _nameError;
+    private bool _isSubmitting;
+    private string? _errorMessage;
+
+    // Client-side validation mirrors the backend rule: a name must contain at least one
+    // non-whitespace character. The backend enforces no maximum length, so none is imposed here.
+    private static string? ValidateName(string? name) =>
+        string.IsNullOrWhiteSpace(name) ? NameRequiredMessage : null;
+
+    private void OnNameChanged()
+    {
+        // Clear a stale validation message as soon as the name becomes valid.
+        if (_nameError is not null && ValidateName(_name) is null)
+        {
+            _nameError = null;
+        }
+    }
+
+    private async Task CreateHouseholdAsync()
+    {
+        _errorMessage = null;
+
+        // Reject an empty or whitespace-only name before any request is sent; the field shows the
+        // message and the handler stops without touching the API.
+        _nameError = ValidateName(_name);
+        if (_nameError is not null)
+        {
+            return;
+        }
+
+        _isSubmitting = true;
+        StateHasChanged();
+
+        try
+        {
+            // The backend creates the current user's membership alongside the household, so the
+            // client only sends the name; it never creates a user-household association itself.
+            await ApiClient.PostAsync<CreateHouseholdRequest, Household>(
+                HouseholdsPath,
+                new CreateHouseholdRequest(_name!.Trim()));
+
+            Navigation.NavigateTo(DashboardPath);
+        }
+        catch (ClientErrorException exception)
+        {
+            // Every API failure already carries the shared convention message and its significant
+            // identifier (for example "Conflict <id>" when the user already has a household).
+            _errorMessage = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            // Unexpected failures still display through the shared convention rather than an
+            // unhandled circuit error.
+            _errorMessage = ClientErrorFormatter.Format(ClientErrorCode.Unknown, exception.GetType().Name);
+        }
+        finally
+        {
+            _isSubmitting = false;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>Request body for <c>POST /api/v1/households</c>; only the name is accepted.</summary>
+    private sealed record CreateHouseholdRequest(string Name);
+}
