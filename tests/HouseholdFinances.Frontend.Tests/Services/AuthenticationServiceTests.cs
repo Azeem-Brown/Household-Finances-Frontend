@@ -3,9 +3,9 @@ using HouseholdFinances.Frontend.Services;
 namespace HouseholdFinances.Frontend.Tests.Services;
 
 /// <summary>
-/// Unit tests for the client-side authentication service surface (issue #9). The real Google
-/// Identity implementation is delivered by backend issue #11; these tests pin the seam and the
-/// shared client error convention used until then.
+/// Unit tests for the client-side authentication result surface (issue #9): the success and failure
+/// shapes and the shared client error convention. The Google sign-in flow itself is covered by
+/// <see cref="GoogleAuthenticationServiceTests"/>.
 /// </summary>
 public class AuthenticationServiceTests
 {
@@ -36,18 +36,5 @@ public class AuthenticationServiceTests
     {
         Assert.Throws<ArgumentNullException>(
             () => AuthenticationResult.Failure(ClientErrorCode.Unknown, null!));
-    }
-
-    [Fact]
-    public async Task UnavailableService_ReportsUnavailableWithoutPretendingToAuthenticate()
-    {
-        var service = new UnavailableAuthenticationService();
-
-        var result = await service.SignInAsync();
-
-        Assert.False(result.Succeeded);
-        Assert.Equal(ClientErrorCode.Unknown, result.ErrorCode);
-        Assert.Equal("Unknown AuthenticationUnavailable", result.ErrorMessage);
-        Assert.Null(result.Destination);
     }
 }

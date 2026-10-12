@@ -37,10 +37,12 @@ builder.Services.AddHttpClient<IApiClient, ApiClient>(client =>
 // Frontend-only client services.
 builder.Services.AddScoped<ThemeService>();
 
-// Authentication entry point for the Login page. The real Google Identity sign-in, backed by the
-// API-issued JWT, is delivered by backend issue #11; until then this honest placeholder reports
-// sign-in as unavailable instead of pretending to authenticate.
-builder.Services.AddScoped<IAuthenticationService, UnavailableAuthenticationService>();
+// Authentication entry point for the Login page. The Google ID token is obtained in the browser
+// through Google Identity Services (the interop boundary), and the Blazor Server host exchanges it
+// for the API-issued pair server to server, so the tokens never reach the browser. The Google
+// client id is configuration (Authentication:Google:ClientId), not a secret.
+builder.Services.AddScoped<IGoogleIdentityProvider, GoogleIdentityInterop>();
+builder.Services.AddScoped<IAuthenticationService, GoogleAuthenticationService>();
 
 var app = builder.Build();
 
