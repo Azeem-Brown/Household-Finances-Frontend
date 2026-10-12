@@ -219,6 +219,54 @@ public class ApiClientTests
         Assert.IsType<HttpRequestException>(exception.InnerException);
     }
 
+    [Fact]
+    public async Task PutAsync_WithStoredToken_AttachesBearerTokenAndSerializesBody()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(HttpStatusCode.OK, "{}");
+
+        var store = new InMemoryTokenStore();
+        await store.SetAsync(NewPair("access-1", "refresh-1"));
+
+        var client = CreateClient(handler, store);
+
+        await client.PutAsync<object, JsonElement>(
+            "/api/v1/households/1/incomes/2",
+            new { name = "Salary" });
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Put, request.Method);
+        Assert.Equal("/api/v1/households/1/incomes/2", request.Path);
+        Assert.Equal("Bearer access-1", request.Authorization);
+        Assert.Equal("{\"name\":\"Salary\"}", request.Body);
+    }
+
+    [Fact]
+    public async Task PutAsync_OnUnauthorized_RefreshesOnceAndRetriesThePut()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.EnqueueJson(HttpStatusCode.Unauthorized, ProblemJson(3, "1", HttpStatusCode.Unauthorized));
+        handler.EnqueueJson(HttpStatusCode.OK, TokenJson("access-2", "refresh-2"));
+        handler.EnqueueJson(HttpStatusCode.OK, "{}");
+
+        var store = new InMemoryTokenStore();
+        await store.SetAsync(NewPair("access-1", "refresh-1"));
+
+        var client = CreateClient(handler, store);
+
+        await client.PutAsync<object, JsonElement>(
+            "/api/v1/households/1/incomes/2",
+            new { name = "Salary" });
+
+        Assert.Equal(3, handler.Requests.Count);
+        Assert.Equal(1, handler.RefreshRequestCount);
+
+        // The original request was retried once with the replacement access token.
+        Assert.Equal(HttpMethod.Put, handler.Requests[2].Method);
+        Assert.Equal("/api/v1/households/1/incomes/2", handler.Requests[2].Path);
+        Assert.Equal("Bearer access-2", handler.Requests[2].Authorization);
+    }
+
     private static ApiClient CreateClient(HttpMessageHandler handler, ITokenStore tokenStore) =>
         new(
             new HttpClient(handler) { BaseAddress = new Uri(BaseUrl) },
