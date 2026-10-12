@@ -1,9 +1,164 @@
 @page "/income"
+@using System.Globalization
+@using HouseholdFinances.Frontend.Models
+@using IncomeEntry = HouseholdFinances.Frontend.Models.Income
+@inject IApiClient ApiClient
 
 <PageTitle>Income | Household Finances</PageTitle>
 
 <PageHeader Title="Income" Subtitle="Track the income coming into your household." />
 
-<MudAlert Severity="Severity.Info">
-    This page is a scaffold placeholder. Its functionality is implemented in a later issue.
-</MudAlert>
+@if (_errorMessage is not null)
+{
+    <div data-testid="income-error">
+        <MudAlert Severity="Severity.Error">@_errorMessage</MudAlert>
+    </div>
+}
+else if (_isLoading)
+{
+    <MudProgressLinear Indeterminate="true" data-testid="income-loading" />
+}
+else if (_household is null)
+{
+    <MudPaper Class="pa-6" Elevation="1" data-testid="income-no-household">
+        <MudText Typo="Typo.body1">@NoHouseholdMessage</MudText>
+    </MudPaper>
+}
+else if (IsEmpty)
+{
+    <MudPaper Class="pa-6" Elevation="1" data-testid="income-empty">
+        <MudText Typo="Typo.h6" GutterBottom="true">No income yet</MudText>
+        <MudText Typo="Typo.body1" Class="mb-4">@EmptyStateMessage</MudText>
+        @* Creating income is a separate issue, so the call to action is shown but not yet wired to
+           a route; a caption explains why rather than linking to a page that does not exist. *@
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   Disabled="true"
+                   data-testid="income-add">
+            Add income
+        </MudButton>
+        <MudText Typo="Typo.caption" Class="mt-2 mud-text-secondary">@AddIncomeUnavailableMessage</MudText>
+    </MudPaper>
+}
+else
+{
+    <MudPaper Class="pa-4 mb-4" Elevation="1" data-testid="income-summary">
+        <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Total income</MudText>
+        <MudText Typo="Typo.h5"><span data-testid="income-total">@TotalText</span></MudText>
+    </MudPaper>
+
+    <div data-testid="income-table">
+        <MudTable T="IncomeEntry" Items="_entries" Elevation="1">
+            <HeaderContent>
+                <MudTh>Name</MudTh>
+                <MudTh>Value</MudTh>
+                <MudTh>Starts</MudTh>
+                <MudTh>Ends</MudTh>
+                <MudTh>Recurring</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd data-testid="income-name">@context.Name</MudTd>
+                <MudTd data-testid="income-value">@MoneyFormatter.Format(context.Value)</MudTd>
+                <MudTd data-testid="income-start">@FormatDate(context.StartDate)</MudTd>
+                <MudTd data-testid="income-end">@FormatDate(context.EndDate)</MudTd>
+                <MudTd data-testid="income-recurring">@RecurrenceText(context)</MudTd>
+            </RowTemplate>
+        </MudTable>
+    </div>
+}
+
+@code {
+    /// <summary>The authenticated endpoint that lists the current user's households.</summary>
+    public const string HouseholdsPath = "/api/v1/households";
+
+    /// <summary>Guidance shown when the household has no income entries yet.</summary>
+    public const string EmptyStateMessage =
+        "Add your first income entry to start building up your household total.";
+
+    /// <summary>Guidance shown when the current user has no household to list income for.</summary>
+    public const string NoHouseholdMessage =
+        "No household was found for your account. Create one before adding income.";
+
+    /// <summary>
+    /// Explains that the add-income flow is delivered by a separate issue, so the empty state never
+    /// links to a page that does not exist yet.
+    /// </summary>
+    public const string AddIncomeUnavailableMessage =
+        "Adding income entries is handled in a follow-up issue.";
+
+    private Household? _household;
+    private IReadOnlyList<IncomeEntry> _entries = Array.Empty<IncomeEntry>();
+    private bool _isLoading = true;
+    private string? _errorMessage;
+
+    /// <summary>
+    /// Builds the income endpoint for a household. Income is nested under its household, so the
+    /// household identifier is part of the path.
+    /// </summary>
+    /// <param name="householdId">The household whose income entries are listed.</param>
+    /// <returns>The API path for the household's income entries.</returns>
+    public static string IncomesPathFor(Guid householdId) =>
+        $"/api/v1/households/{householdId}/incomes";
+
+    // The empty state is shown only once a household exists but has no entries, so a new user is
+    // guided to add income instead of being shown a bare table.
+    private bool IsEmpty => _household is not null && _entries.Count == 0;
+
+    // The summary is the sum of the listed entries, formatted with the decided money rules.
+    private string TotalText => MoneyFormatter.Format(_entries.Sum(entry => entry.Value));
+
+    // ISO 8601 keeps the displayed dates unambiguous and identical regardless of the host locale.
+    private static string FormatDate(DateTime date) =>
+        date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    // A recurring entry shows its cadence when one is recorded; a one-off entry shows "One-off".
+    private static string RecurrenceText(IncomeEntry income) =>
+        !income.Recurring
+            ? "One-off"
+            : income.Interval is { } interval
+                ? $"Recurring ({interval})"
+                : "Recurring";
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+
+        try
+        {
+            var households = await ApiClient.GetAsync<IReadOnlyList<Household>>(HouseholdsPath);
+
+            // The backend returns the list ordered by name. Income is nested under a single
+            // household, so this page takes the same first household the dashboard summarises,
+            // keeping the two pages consistent.
+            _household = households.FirstOrDefault();
+
+            if (_household is null)
+            {
+                _entries = Array.Empty<IncomeEntry>();
+                return;
+            }
+
+            _entries = await ApiClient.GetAsync<IReadOnlyList<IncomeEntry>>(
+                IncomesPathFor(_household.Id));
+        }
+        catch (ClientErrorException exception)
+        {
+            // Every API failure already carries the shared convention message and its significant
+            // identifier (for example "NotFound <id>" when the household is not the user's).
+            _errorMessage = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            // Unexpected failures still surface through the shared convention rather than an
+            // unhandled circuit error or a silent blank page.
+            _errorMessage = ClientErrorFormatter.Format(ClientErrorCode.Unknown, exception.GetType().Name);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+}
