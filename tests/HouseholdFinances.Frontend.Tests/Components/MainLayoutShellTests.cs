@@ -13,11 +13,11 @@ namespace HouseholdFinances.Frontend.Tests.Components;
 /// the rendered shell structure; they do not prove the responsive breakpoints, theming in a real
 /// browser, or keyboard focus behavior.
 /// </summary>
-public class MainLayoutTests : BunitContext, IAsyncLifetime
+public class MainLayoutShellTests : BunitContext, IAsyncLifetime
 {
     private readonly ThemeService _themeService = new();
 
-    public MainLayoutTests()
+    public MainLayoutShellTests()
     {
         // MudBlazor components may touch JS interop; loose mode keeps render side-effect free.
         JSInterop.Mode = JSRuntimeMode.Loose;
