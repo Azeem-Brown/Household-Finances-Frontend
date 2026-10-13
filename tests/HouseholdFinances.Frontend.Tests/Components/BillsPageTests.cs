@@ -3,6 +3,7 @@ using Bunit;
 using HouseholdFinances.Frontend.Models;
 using HouseholdFinances.Frontend.Services;
 using Microsoft.Extensions.DependencyInjection;
+using MudBlazor;
 using MudBlazor.Services;
 using BillsPage = HouseholdFinances.Frontend.Components.Pages.Bills;
 
@@ -443,6 +444,81 @@ public class BillsPageTests : BunitContext, IAsyncLifetime
 
         // The form stays open so the user can correct the input and retry.
         Assert.Single(cut.FindAll("[data-testid='bills-form']"));
+    }
+
+    [Fact]
+    public async Task Bills_AddForm_RecurringEntry_OffersEveryIntervalAndSendsTheChosenOne()
+    {
+        ArrangeHouseholdWith();
+
+        // MudBlazor renders the options of a MudSelect inside MudPopoverProvider. The layout supplies
+        // it in the running app, so it has to be rendered explicitly here for options to exist at all.
+        var popover = Render<MudPopoverProvider>();
+
+        var cut = Render<BillsPage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='bills-add']")));
+
+        cut.Find("[data-testid='bills-add']").Click();
+        cut.Find("[data-testid='bills-form-name']").Input("Rent");
+        cut.Find("[data-testid='bills-recurring-toggle']").Change(true);
+        cut.WaitForAssertion(() => Assert.Single(cut.FindComponents<MudSelect<Interval?>>()));
+
+        var select = cut.FindComponent<MudSelect<Interval?>>();
+        await cut.InvokeAsync(() => select.Instance.OpenMenu());
+
+        // Every supported cadence is offered, so any of them can be set on a recurring bill.
+        popover.WaitForAssertion(() =>
+        {
+            var labels = popover.FindAll("div.mud-list-item")
+                .Select(item => item.TextContent.Trim())
+                .ToList();
+            Assert.Equal(
+                new[] { "Daily", "Weekly", "BiWeekly", "Monthly", "Quarterly", "Yearly" },
+                labels);
+        });
+
+        popover.FindAll("div.mud-list-item")
+            .First(item => item.TextContent.Trim() == "BiWeekly")
+            .Click();
+
+        cut.Find("[data-testid='bills-form-submit']").Click();
+        cut.WaitForAssertion(() => Assert.Single(_apiClient.Posts));
+
+        using var body = JsonDocument.Parse(
+            JsonSerializer.Serialize(_apiClient.Posts[0].Body, WebJson));
+        Assert.True(body.RootElement.GetProperty("recurring").GetBoolean());
+        // The contract serializes enums as their numeric values.
+        Assert.Equal((int)Interval.BiWeekly, body.RootElement.GetProperty("interval").GetInt32());
+    }
+
+    [Fact]
+    public void Bills_EditForm_RecurringEntry_RestoresTheSavedIntervalAndPutsItBack()
+    {
+        var bill = SampleBill("Rent", 1200.00, recurring: true, interval: Interval.Monthly);
+        var household = ArrangeHouseholdWith(bill);
+
+        var cut = Render<BillsPage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='bills-edit']")));
+
+        cut.Find("[data-testid='bills-edit']").Click();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindComponents<MudSelect<Interval?>>()));
+
+        // The saved cadence is restored into the selector rather than resetting to a default.
+        cut.WaitForAssertion(() => Assert.Contains(
+            Interval.Monthly.ToString(),
+            cut.FindComponent<MudSelect<Interval?>>().Markup));
+
+        cut.Find("[data-testid='bills-form-submit']").Click();
+        cut.WaitForAssertion(() => Assert.Single(_apiClient.Puts));
+
+        var put = Assert.Single(_apiClient.Puts);
+        Assert.Equal(BillsPage.BillPathFor(household.Id, bill.Id), put.Path);
+
+        // Editing without touching the interval resends the saved cadence instead of dropping it.
+        using var body = JsonDocument.Parse(JsonSerializer.Serialize(put.Body, WebJson));
+        Assert.True(body.RootElement.GetProperty("recurring").GetBoolean());
+        // The contract serializes enums as their numeric values.
+        Assert.Equal((int)Interval.Monthly, body.RootElement.GetProperty("interval").GetInt32());
     }
 
     /// <summary>
