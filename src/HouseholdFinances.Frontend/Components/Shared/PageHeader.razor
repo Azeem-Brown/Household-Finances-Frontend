@@ -1,9 +1,11 @@
-<MudText Typo="Typo.h4" GutterBottom="true">@Title</MudText>
+<header class="page-header">
+    <MudText Typo="Typo.h4" Color="Color.Primary">@Title</MudText>
 
-@if (!string.IsNullOrWhiteSpace(Subtitle))
-{
-    <MudText Typo="Typo.subtitle1" Class="mud-text-secondary mb-4">@Subtitle</MudText>
-}
+    @if (!string.IsNullOrWhiteSpace(Subtitle))
+    {
+        <MudText Typo="Typo.subtitle1" Class="page-header-subtitle mud-text-secondary">@Subtitle</MudText>
+    }
+</header>
 
 @code {
     /// <summary>Heading shown at the top of a page.</summary>
