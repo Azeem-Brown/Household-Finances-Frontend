@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using MudBlazor;
 using MudBlazor.Services;
 using BillsPage = HouseholdFinances.Frontend.Components.Pages.Bills;
+using DashboardPage = HouseholdFinances.Frontend.Components.Pages.Dashboard;
 using IncomeEntry = HouseholdFinances.Frontend.Models.Income;
 using IncomePage = HouseholdFinances.Frontend.Components.Pages.Income;
 
@@ -77,6 +78,51 @@ public class PeriodSelectionTests : BunitContext, IAsyncLifetime
 
         income.WaitForAssertion(() =>
             Assert.Equal("$300.00", income.Find("[data-testid='income-total']").TextContent.Trim()));
+    }
+
+    [Fact]
+    public async Task PeriodSelectedOnDashboard_IsSelectedOnBillsInTheSameCircuit()
+    {
+        var household = new Household
+        {
+            Id = Guid.NewGuid(),
+            Name = "Family",
+            Incomes = 400.00,
+            Payments = 100.00
+        };
+
+        _apiClient.GetResponsesByPath[DashboardPage.HouseholdsPathFor(Interval.Monthly)] =
+            new List<Household> { household };
+        _apiClient.GetResponsesByPath[DashboardPage.HouseholdsPathFor(Interval.BiWeekly)] =
+            new List<Household> { household };
+        _apiClient.GetResponsesByPath[BillsPage.HouseholdsPath] = new List<Household> { household };
+        _apiClient.GetResponsesByPath[BillsPage.BillsPathFor(household.Id)] = FixtureBills();
+
+        var popover = Render<MudPopoverProvider>();
+
+        var dashboard = Render<DashboardPage>();
+        dashboard.WaitForAssertion(() =>
+            Assert.Single(dashboard.FindAll("[data-testid='dashboard-period']")));
+
+        var select = dashboard.FindComponent<MudSelect<Interval>>();
+        await dashboard.InvokeAsync(() => select.Instance.OpenMenu());
+        popover.WaitForAssertion(() =>
+            Assert.NotEmpty(popover.FindAll("div.mud-list-item")));
+        popover.FindAll("div.mud-list-item")
+            .First(item => item.TextContent.Trim() == nameof(Interval.BiWeekly))
+            .Click();
+
+        dashboard.WaitForAssertion(() => Assert.Equal(
+            "$300.00", dashboard.Find("[data-testid='dashboard-balance']").TextContent.Trim()));
+
+        // Bills opens in the same circuit and already shows the shared selection.
+        var bills = Render<BillsPage>();
+        bills.WaitForAssertion(() => Assert.Contains(
+            nameof(Interval.BiWeekly),
+            bills.FindComponent<MudSelect<Interval>>().Markup));
+
+        bills.WaitForAssertion(() =>
+            Assert.Equal("$300.00", bills.Find("[data-testid='bills-total']").TextContent.Trim()));
     }
 
     private static List<Bill> FixtureBills() =>

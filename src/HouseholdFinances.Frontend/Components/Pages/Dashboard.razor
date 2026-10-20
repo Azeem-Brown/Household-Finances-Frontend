@@ -2,6 +2,8 @@
 @using System.Globalization
 @using HouseholdFinances.Frontend.Models
 @inject IApiClient ApiClient
+@inject TimeProvider Clock
+@inject PeriodSelectionService PeriodSelection
 
 <PageTitle>Household Dashboard | Household Finances</PageTitle>
 
@@ -23,41 +25,59 @@ else if (_household is null)
         <MudText Typo="Typo.body1">@NoHouseholdMessage</MudText>
     </MudPaper>
 }
-else if (IsEmpty)
-{
-    <MudPaper Class="pa-6" Elevation="1" data-testid="dashboard-empty">
-        <MudText Typo="Typo.h6" GutterBottom="true">Nothing to summarise yet</MudText>
-        <MudText Typo="Typo.body1">@EmptyStateMessage</MudText>
-    </MudPaper>
-}
 else
 {
-    <MudText Typo="Typo.subtitle1" Class="mb-4">@HouseholdName</MudText>
+    <div class="d-flex align-center flex-wrap gap-4 mb-4">
+        <MudText Typo="Typo.subtitle1">@HouseholdName</MudText>
 
-    <MudGrid>
-        <MudItem xs="12" md="4">
-            <MudCard Elevation="1" Class="pa-4 h-100">
-                <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Total income</MudText>
-                <MudText Typo="Typo.h5"><span data-testid="dashboard-income">@IncomeText</span></MudText>
-            </MudCard>
-        </MudItem>
+        <MudSelect T="Interval"
+                   Value="SelectedPeriod"
+                   ValueChanged="OnPeriodChanged"
+                   Label="Period"
+                   Variant="Variant.Outlined"
+                   Dense="true"
+                   Style="min-width: 12rem;"
+                   data-testid="dashboard-period">
+            @foreach (Interval interval in Intervals)
+            {
+                <MudSelectItem T="Interval" Value="@interval">@interval</MudSelectItem>
+            }
+        </MudSelect>
+    </div>
 
-        <MudItem xs="12" md="4">
-            <MudCard Elevation="1" Class="pa-4 h-100">
-                <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Total expenses</MudText>
-                <MudText Typo="Typo.h5"><span data-testid="dashboard-expenses">@ExpensesText</span></MudText>
-            </MudCard>
-        </MudItem>
+    @if (IsEmpty)
+    {
+        <MudPaper Class="pa-6" Elevation="1" data-testid="dashboard-empty">
+            <MudText Typo="Typo.h6" GutterBottom="true">Nothing to summarise yet</MudText>
+            <MudText Typo="Typo.body1">@EmptyStateMessage</MudText>
+        </MudPaper>
+    }
+    else
+    {
+        <MudGrid>
+            <MudItem xs="12" md="4">
+                <MudCard Elevation="1" Class="pa-4 h-100">
+                    <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Total income</MudText>
+                    <MudText Typo="Typo.h5"><span data-testid="dashboard-income">@IncomeText</span></MudText>
+                </MudCard>
+            </MudItem>
 
-        <MudItem xs="12" md="4">
-            <MudCard Elevation="1" Class="pa-4 h-100">
-                <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Remaining balance</MudText>
-                <MudText Typo="Typo.h5"><span data-testid="dashboard-balance">@BalanceText</span></MudText>
-            </MudCard>
-        </MudItem>
-    </MudGrid>
+            <MudItem xs="12" md="4">
+                <MudCard Elevation="1" Class="pa-4 h-100">
+                    <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Total expenses</MudText>
+                    <MudText Typo="Typo.h5"><span data-testid="dashboard-expenses">@ExpensesText</span></MudText>
+                </MudCard>
+            </MudItem>
 
-    <MudPaper Class="pa-4 mt-4" Elevation="1" data-testid="dashboard-allocation">
+            <MudItem xs="12" md="4">
+                <MudCard Elevation="1" Class="pa-4 h-100">
+                    <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Remaining balance</MudText>
+                    <MudText Typo="Typo.h5"><span data-testid="dashboard-balance">@BalanceText</span></MudText>
+                </MudCard>
+            </MudItem>
+        </MudGrid>
+
+        <MudPaper Class="pa-4 mt-4" Elevation="1" data-testid="dashboard-allocation">
         <MudText Typo="Typo.h6" GutterBottom="true">Split your remaining balance</MudText>
         <MudText Typo="Typo.body2" Class="mb-4">@AllocationHintMessage</MudText>
 
@@ -119,12 +139,22 @@ else
                 </MudGrid>
             </div>
         }
-    </MudPaper>
+        </MudPaper>
+    }
 }
 
 @code {
     /// <summary>The authenticated endpoint that lists the current user's households with their totals.</summary>
     public const string HouseholdsPath = "/api/v1/households";
+
+    /// <summary>
+    /// Builds the household list endpoint for a calendar period. The period is sent as the
+    /// <see cref="Interval"/> member name (for example <c>BiWeekly</c>), which the API parses, so
+    /// the dashboard sends only the selection and never computes a date window itself.
+    /// </summary>
+    /// <param name="period">The period whose totals should be returned.</param>
+    /// <returns>The API path for the household totals in that period.</returns>
+    public static string HouseholdsPathFor(Interval period) => $"{HouseholdsPath}?period={period}";
 
     /// <summary>Guidance shown when the household has no income or bill data yet.</summary>
     public const string EmptyStateMessage =
@@ -148,6 +178,20 @@ else
     /// </summary>
     public const string AllocationExceedsBalanceMessage =
         "Savings plus fun money cannot be more than the remaining balance.";
+
+    /// <summary>
+    /// The cadence options, in the order fixed by the Interval decision (#4): Daily, Weekly,
+    /// BiWeekly, Monthly, Quarterly, Yearly.
+    /// </summary>
+    public static readonly IReadOnlyList<Interval> Intervals = new[]
+    {
+        Interval.Daily,
+        Interval.Weekly,
+        Interval.BiWeekly,
+        Interval.Monthly,
+        Interval.Quarterly,
+        Interval.Yearly
+    };
 
     private Household? _household;
     private bool _isLoading = true;
@@ -186,6 +230,34 @@ else
             ? MoneyFormatter.Format(RemainingBalance - allocation.Savings - allocation.FunMoney)
             : MoneyFormatter.Format(RemainingBalance);
 
+    // The period control reads and writes the shared circuit-scoped selection, so the Dashboard,
+    // Income, and Bills always agree on the window. There is no page-local period field.
+    private Interval SelectedPeriod => PeriodSelection.Period;
+
+    // A changed period reloads the household totals from the API, which is the only place the
+    // window is applied. The accepted split and its messages are discarded because they were
+    // validated against the previous balance; the allocation inputs and rules are unchanged.
+    private async Task OnPeriodChanged(Interval period)
+    {
+        if (PeriodSelection.Period == period)
+        {
+            return;
+        }
+
+        PeriodSelection.Period = period;
+        ClearAllocationState();
+
+        await LoadAsync();
+    }
+
+    private void ClearAllocationState()
+    {
+        _allocation = null;
+        _savingsError = null;
+        _funMoneyError = null;
+        _allocationErrorMessage = null;
+    }
+
     // Client-side validation mirrors the issue's rules: each amount must be non-negative and the
     // two amounts together must not exceed the remaining balance. Amounts are rounded to the decided
     // money precision first so validation and display agree on the same value.
@@ -220,9 +292,19 @@ else
         _isLoading = true;
         _errorMessage = null;
 
+        // The period this request was issued for. A response is applied only if its period is still
+        // the selected one, so a slow earlier response cannot overwrite a newer selection.
+        Interval requestedPeriod = PeriodSelection.Period;
+
         try
         {
-            var households = await ApiClient.GetAsync<IReadOnlyList<Household>>(HouseholdsPath);
+            IReadOnlyList<Household> households =
+                await ApiClient.GetAsync<IReadOnlyList<Household>>(HouseholdsPathFor(requestedPeriod));
+
+            if (PeriodSelection.Period != requestedPeriod)
+            {
+                return;
+            }
 
             // The backend returns the list ordered by name. The dashboard summarises a single
             // household, so it predicts a stable subject by taking the first one.
@@ -231,18 +313,30 @@ else
         catch (ClientErrorException exception)
         {
             // Every API failure already carries the shared convention message and its significant
-            // identifier (for example "Unauthorized 7").
-            _errorMessage = exception.Message;
+            // identifier (for example "Unauthorized 7"). A stale failure is ignored like a stale
+            // response.
+            if (PeriodSelection.Period == requestedPeriod)
+            {
+                _errorMessage = exception.Message;
+            }
         }
         catch (Exception exception)
         {
             // Unexpected failures still surface through the shared convention rather than an
             // unhandled circuit error or a silent blank page.
-            _errorMessage = ClientErrorFormatter.Format(ClientErrorCode.Unknown, exception.GetType().Name);
+            if (PeriodSelection.Period == requestedPeriod)
+            {
+                _errorMessage = ClientErrorFormatter.Format(ClientErrorCode.Unknown, exception.GetType().Name);
+            }
         }
         finally
         {
-            _isLoading = false;
+            // Only the request for the current selection may end the loading state; a newer request
+            // owns it otherwise.
+            if (PeriodSelection.Period == requestedPeriod)
+            {
+                _isLoading = false;
+            }
         }
     }
 }
