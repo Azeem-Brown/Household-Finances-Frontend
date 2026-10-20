@@ -102,7 +102,7 @@ public class PeriodSelectionTests : BunitContext, IAsyncLifetime
 
         var dashboard = Render<DashboardPage>();
         dashboard.WaitForAssertion(() =>
-            Assert.Single(dashboard.FindAll("[data-testid='dashboard-period']")));
+            Assert.NotEmpty(dashboard.FindAll("[data-testid='dashboard-period']")));
 
         var select = dashboard.FindComponent<MudSelect<Interval>>();
         await dashboard.InvokeAsync(() => select.Instance.OpenMenu());

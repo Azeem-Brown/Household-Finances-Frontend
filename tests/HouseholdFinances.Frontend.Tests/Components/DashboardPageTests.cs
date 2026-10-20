@@ -132,7 +132,8 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
         Assert.Empty(cut.FindAll("[data-testid='dashboard-income']"));
         Assert.Empty(cut.FindAll("[data-testid='dashboard-expenses']"));
         Assert.Empty(cut.FindAll("[data-testid='dashboard-balance']"));
-        Assert.Single(cut.FindAll("[data-testid='dashboard-period']"));
+        Assert.NotEmpty(cut.FindAll("[data-testid='dashboard-period']"));
+        Assert.Single(cut.FindComponents<MudSelect<Interval>>());
     }
 
     [Fact]
@@ -309,7 +310,11 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
 
         var cut = Render<Dashboard>();
 
-        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='dashboard-period']")));
+        cut.WaitForAssertion(() =>
+        {
+            Assert.NotEmpty(cut.FindAll("[data-testid='dashboard-period']"));
+            Assert.Single(cut.FindComponents<MudSelect<Interval>>());
+        });
 
         Assert.Equal(Interval.Monthly, _periodSelection.Period);
         Assert.Contains(
@@ -329,7 +334,11 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
 
         var cut = Render<Dashboard>();
 
-        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='dashboard-period']")));
+        cut.WaitForAssertion(() =>
+        {
+            Assert.NotEmpty(cut.FindAll("[data-testid='dashboard-period']"));
+            Assert.Single(cut.FindComponents<MudSelect<Interval>>());
+        });
 
         var select = cut.FindComponent<MudSelect<Interval>>();
         await cut.InvokeAsync(() => select.Instance.OpenMenu());
