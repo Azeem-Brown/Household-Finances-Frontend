@@ -3,6 +3,8 @@
 @using HouseholdFinances.Frontend.Models
 @using IncomeEntry = HouseholdFinances.Frontend.Models.Income
 @inject IApiClient ApiClient
+@inject TimeProvider Clock
+@inject PeriodSelectionService PeriodSelection
 
 <PageTitle>Income | Household Finances</PageTitle>
 
@@ -144,8 +146,38 @@ else
     else
     {
         <MudPaper Class="pa-4 mb-4" Elevation="1" data-testid="income-summary">
-            <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Total income</MudText>
-            <MudText Typo="Typo.h5"><span data-testid="income-total">@TotalText</span></MudText>
+            <div class="d-flex align-center flex-wrap gap-4 mb-2">
+                <MudSelect T="Interval"
+                           @bind-Value="SelectedPeriod"
+                           Label="Period"
+                           Variant="Variant.Outlined"
+                           Dense="true"
+                           Style="min-width: 12rem;"
+                           data-testid="income-period">
+                    @foreach (var interval in Intervals)
+                    {
+                        <MudSelectItem T="Interval" Value="@interval">@interval</MudSelectItem>
+                    }
+                </MudSelect>
+            </div>
+
+            <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">@TotalLabel</MudText>
+            <MudText Typo="Typo.h5"><span data-testid="income-total">@CombinedTotalText</span></MudText>
+
+            <div class="d-flex flex-wrap gap-6 mt-2">
+                <div>
+                    <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Recurring</MudText>
+                    <MudText Typo="Typo.subtitle1">
+                        <span data-testid="income-recurring-total">@RecurringTotalText</span>
+                    </MudText>
+                </div>
+                <div>
+                    <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">One-off</MudText>
+                    <MudText Typo="Typo.subtitle1">
+                        <span data-testid="income-one-off-total">@OneOffTotalText</span>
+                    </MudText>
+                </div>
+            </div>
         </MudPaper>
 
         <div data-testid="income-table">
@@ -231,6 +263,7 @@ else
 
     private Household? _household;
     private IReadOnlyList<IncomeEntry> _entries = Array.Empty<IncomeEntry>();
+    private OccurrenceTotals _totals;
     private bool _isLoading = true;
     private string? _errorMessage;
 
@@ -278,8 +311,49 @@ else
     // guided to add income instead of being shown a bare table.
     private bool IsEmpty => _household is not null && _entries.Count == 0;
 
-    // The summary is the sum of the listed entries, formatted with the decided money rules.
-    private string TotalText => MoneyFormatter.Format(_entries.Sum(entry => entry.Value));
+    // The period selector writes through to the shared circuit-scoped selection, so Income and
+    // Bills always show the same period. Changing it recomputes the figures from the rows already
+    // loaded, so no request is made.
+    private Interval SelectedPeriod
+    {
+        get => PeriodSelection.Period;
+        set
+        {
+            if (PeriodSelection.Period == value)
+            {
+                return;
+            }
+
+            PeriodSelection.Period = value;
+            RecalculateTotals();
+        }
+    }
+
+    private string TotalLabel => $"Total income ({SelectedPeriod})";
+
+    private string CombinedTotalText => MoneyFormatter.Format(_totals.Combined);
+
+    private string RecurringTotalText => MoneyFormatter.Format(_totals.Recurring);
+
+    private string OneOffTotalText => MoneyFormatter.Format(_totals.OneOff);
+
+    // The only time source on the page. UTC calendar dates match the window rule, so the host
+    // clock is never read directly.
+    private DateOnly Today => DateOnly.FromDateTime(Clock.GetUtcNow().UtcDateTime);
+
+    // Both figures come from the one shared calculator so the two pages cannot diverge. Each
+    // figure is formatted once from its own unrounded value, not from the rounded breakdown.
+    private void RecalculateTotals()
+    {
+        _totals = OccurrenceCalculator.Totals(
+            _entries.Select(entry => new MoneyEntry(
+                entry.Value,
+                entry.StartDate,
+                entry.EndDate,
+                entry.Recurring,
+                entry.Interval)),
+            OccurrenceCalculator.WindowFor(PeriodSelection.Period, Today));
+    }
 
     // ISO 8601 keeps the displayed dates unambiguous and identical regardless of the host locale.
     private static string FormatDate(DateTime date) =>
@@ -302,8 +376,8 @@ else
         _value = 0;
         // Defaulting both dates to today keeps a new entry valid without extra input; the end date
         // stays editable and is validated on submit.
-        _startDate = DateTime.Today;
-        _endDate = DateTime.Today;
+        _startDate = Today.ToDateTime(TimeOnly.MinValue);
+        _endDate = Today.ToDateTime(TimeOnly.MinValue);
         _recurring = false;
         _interval = null;
         ClearErrors();
@@ -496,6 +570,9 @@ else
         }
         finally
         {
+            // Recompute from the rows that are now loaded; a failed load shows the error branch
+            // instead of the summary, so stale figures are never displayed.
+            RecalculateTotals();
             _isLoading = false;
         }
     }
