@@ -3,6 +3,7 @@ using Bunit;
 using HouseholdFinances.Frontend.Models;
 using HouseholdFinances.Frontend.Services;
 using Microsoft.Extensions.DependencyInjection;
+using MudBlazor;
 using MudBlazor.Services;
 using IncomePage = HouseholdFinances.Frontend.Components.Pages.Income;
 
@@ -442,6 +443,81 @@ public class IncomePageTests : BunitContext, IAsyncLifetime
 
         // The form stays open so the user can correct the input and retry.
         Assert.Single(cut.FindAll("[data-testid='income-form']"));
+    }
+
+    [Fact]
+    public async Task Income_AddForm_RecurringEntry_OffersEveryIntervalAndSendsTheChosenOne()
+    {
+        ArrangeHouseholdWith();
+
+        // MudBlazor renders the options of a MudSelect inside MudPopoverProvider. The layout supplies
+        // it in the running app, so it has to be rendered explicitly here for options to exist at all.
+        var popover = Render<MudPopoverProvider>();
+
+        var cut = Render<IncomePage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='income-add']")));
+
+        cut.Find("[data-testid='income-add']").Click();
+        cut.Find("[data-testid='income-form-name']").Input("Salary");
+        cut.Find("[data-testid='income-recurring-toggle']").Change(true);
+        cut.WaitForAssertion(() => Assert.Single(cut.FindComponents<MudSelect<Interval?>>()));
+
+        var select = cut.FindComponent<MudSelect<Interval?>>();
+        await cut.InvokeAsync(() => select.Instance.OpenMenu());
+
+        // Every supported cadence is offered, so any of them can be set on a recurring entry.
+        popover.WaitForAssertion(() =>
+        {
+            var labels = popover.FindAll("div.mud-list-item")
+                .Select(item => item.TextContent.Trim())
+                .ToList();
+            Assert.Equal(
+                new[] { "Daily", "Weekly", "BiWeekly", "Monthly", "Quarterly", "Yearly" },
+                labels);
+        });
+
+        popover.FindAll("div.mud-list-item")
+            .First(item => item.TextContent.Trim() == "Yearly")
+            .Click();
+
+        cut.Find("[data-testid='income-form-submit']").Click();
+        cut.WaitForAssertion(() => Assert.Single(_apiClient.Posts));
+
+        using var body = JsonDocument.Parse(
+            JsonSerializer.Serialize(_apiClient.Posts[0].Body, WebJson));
+        Assert.True(body.RootElement.GetProperty("recurring").GetBoolean());
+        // The contract serializes enums as their numeric values.
+        Assert.Equal((int)Interval.Yearly, body.RootElement.GetProperty("interval").GetInt32());
+    }
+
+    [Fact]
+    public void Income_EditForm_RecurringEntry_RestoresTheSavedIntervalAndPutsItBack()
+    {
+        var entry = SampleIncome("Rent", 1000.00, recurring: true, interval: Interval.Quarterly);
+        var household = ArrangeHouseholdWith(entry);
+
+        var cut = Render<IncomePage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='income-edit']")));
+
+        cut.Find("[data-testid='income-edit']").Click();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindComponents<MudSelect<Interval?>>()));
+
+        // The saved cadence is restored into the selector rather than resetting to a default.
+        cut.WaitForAssertion(() => Assert.Contains(
+            Interval.Quarterly.ToString(),
+            cut.FindComponent<MudSelect<Interval?>>().Markup));
+
+        cut.Find("[data-testid='income-form-submit']").Click();
+        cut.WaitForAssertion(() => Assert.Single(_apiClient.Puts));
+
+        var put = Assert.Single(_apiClient.Puts);
+        Assert.Equal(IncomePage.IncomePathFor(household.Id, entry.Id), put.Path);
+
+        // Editing without touching the interval resends the saved cadence instead of dropping it.
+        using var body = JsonDocument.Parse(JsonSerializer.Serialize(put.Body, WebJson));
+        Assert.True(body.RootElement.GetProperty("recurring").GetBoolean());
+        // The contract serializes enums as their numeric values.
+        Assert.Equal((int)Interval.Quarterly, body.RootElement.GetProperty("interval").GetInt32());
     }
 
     /// <summary>
