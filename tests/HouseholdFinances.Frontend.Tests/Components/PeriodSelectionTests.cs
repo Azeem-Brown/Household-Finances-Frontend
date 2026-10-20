@@ -83,7 +83,7 @@ public class PeriodSelectionTests : BunitContext, IAsyncLifetime
     [Fact]
     public async Task PeriodSelectedOnDashboard_IsSelectedOnBillsInTheSameCircuit()
     {
-        var household = new Household
+        Household household = new()
         {
             Id = Guid.NewGuid(),
             Name = "Family",
@@ -98,13 +98,14 @@ public class PeriodSelectionTests : BunitContext, IAsyncLifetime
         _apiClient.GetResponsesByPath[BillsPage.HouseholdsPath] = new List<Household> { household };
         _apiClient.GetResponsesByPath[BillsPage.BillsPathFor(household.Id)] = FixtureBills();
 
-        var popover = Render<MudPopoverProvider>();
+        IRenderedComponent<MudPopoverProvider> popover = Render<MudPopoverProvider>();
 
-        var dashboard = Render<DashboardPage>();
+        IRenderedComponent<DashboardPage> dashboard = Render<DashboardPage>();
         dashboard.WaitForAssertion(() =>
             Assert.NotEmpty(dashboard.FindAll("[data-testid='dashboard-period']")));
 
-        var select = dashboard.FindComponent<MudSelect<Interval>>();
+        IRenderedComponent<MudSelect<Interval>> select =
+            dashboard.FindComponent<MudSelect<Interval>>();
         await dashboard.InvokeAsync(() => select.Instance.OpenMenu());
         popover.WaitForAssertion(() =>
             Assert.NotEmpty(popover.FindAll("div.mud-list-item")));
@@ -116,7 +117,7 @@ public class PeriodSelectionTests : BunitContext, IAsyncLifetime
             "$300.00", dashboard.Find("[data-testid='dashboard-balance']").TextContent.Trim()));
 
         // Bills opens in the same circuit and already shows the shared selection.
-        var bills = Render<BillsPage>();
+        IRenderedComponent<BillsPage> bills = Render<BillsPage>();
         bills.WaitForAssertion(() => Assert.Contains(
             nameof(Interval.BiWeekly),
             bills.FindComponent<MudSelect<Interval>>().Markup));

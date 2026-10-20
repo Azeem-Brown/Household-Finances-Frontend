@@ -9,16 +9,16 @@ using MudBlazor.Services;
 namespace HouseholdFinances.Frontend.Tests.Components;
 
 /// <summary>
-/// bUnit component tests for the Household Dashboard (issue #12): the populated summary renders the
-/// income, expense, and remaining-balance values from the household data; the empty state renders
-/// guidance instead of a bare zero; and load failures surface through the shared client error
-/// convention.
+/// bUnit component tests for the Household Dashboard: the populated summary renders the income,
+/// expense, and remaining-balance values for the selected calendar period; the period control
+/// offers the six intervals and defaults to Monthly; the empty state renders guidance instead of a
+/// bare zero; and load failures surface through the shared client error convention.
 /// </summary>
 /// <remarks>
 /// The API client is replaced with a test double, so no live backend or browser is involved. The
-/// tests prove the page requests the household list, formats the totals with the decided money
-/// rules, and shows guidance or an error; they do not prove the real backend returns the totals or
-/// that a browser renders the page.
+/// tests prove the page requests the period-qualified household list, renders the returned totals
+/// unchanged, and shows guidance or an error; they do not prove the real backend windows the totals
+/// or that a browser renders the page.
 /// </remarks>
 public class DashboardPageTests : BunitContext, IAsyncLifetime
 {
@@ -308,7 +308,7 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
     {
         ArrangeHouseholdsForEveryPeriod();
 
-        var cut = Render<Dashboard>();
+        IRenderedComponent<Dashboard> cut = Render<Dashboard>();
 
         cut.WaitForAssertion(() =>
         {
@@ -330,9 +330,9 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
 
         // MudBlazor renders the options of a MudSelect inside MudPopoverProvider. The layout
         // supplies it in the running app, so it has to be rendered explicitly here.
-        var popover = Render<MudPopoverProvider>();
+        IRenderedComponent<MudPopoverProvider> popover = Render<MudPopoverProvider>();
 
-        var cut = Render<Dashboard>();
+        IRenderedComponent<Dashboard> cut = Render<Dashboard>();
 
         cut.WaitForAssertion(() =>
         {
@@ -340,13 +340,15 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
             Assert.Single(cut.FindComponents<MudSelect<Interval>>());
         });
 
-        var select = cut.FindComponent<MudSelect<Interval>>();
+        IRenderedComponent<MudSelect<Interval>> select = cut.FindComponent<MudSelect<Interval>>();
         await cut.InvokeAsync(() => select.Instance.OpenMenu());
 
         popover.WaitForAssertion(() => Assert.NotEmpty(popover.FindAll("div.mud-list-item")));
 
+        string[] expectedOptions = { "Daily", "Weekly", "BiWeekly", "Monthly", "Quarterly", "Yearly" };
+
         Assert.Equal(
-            new[] { "Daily", "Weekly", "BiWeekly", "Monthly", "Quarterly", "Yearly" },
+            expectedOptions,
             popover.FindAll("div.mud-list-item")
                 .Select(item => item.TextContent.Trim())
                 .ToList());
@@ -364,9 +366,9 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
     {
         ArrangeHouseholdsForEveryPeriod();
 
-        var popover = Render<MudPopoverProvider>();
+        IRenderedComponent<MudPopoverProvider> popover = Render<MudPopoverProvider>();
 
-        var cut = Render<Dashboard>();
+        IRenderedComponent<Dashboard> cut = Render<Dashboard>();
 
         cut.WaitForAssertion(() =>
             Assert.Equal(Dashboard.HouseholdsPathFor(Interval.Monthly), _apiClient.Gets[0]));
@@ -413,9 +415,9 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
     {
         ArrangeHouseholdsForEveryPeriod();
 
-        var popover = Render<MudPopoverProvider>();
+        IRenderedComponent<MudPopoverProvider> popover = Render<MudPopoverProvider>();
 
-        var cut = Render<Dashboard>();
+        IRenderedComponent<Dashboard> cut = Render<Dashboard>();
 
         cut.WaitForAssertion(() =>
             Assert.Single(cut.FindAll("[data-testid='dashboard-allocation']")));
@@ -447,9 +449,9 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
     {
         ArrangeHouseholdsForEveryPeriod();
 
-        var popover = Render<MudPopoverProvider>();
+        IRenderedComponent<MudPopoverProvider> popover = Render<MudPopoverProvider>();
 
-        var cut = Render<Dashboard>();
+        IRenderedComponent<Dashboard> cut = Render<Dashboard>();
 
         cut.WaitForAssertion(() =>
             Assert.Single(cut.FindAll("[data-testid='dashboard-allocation']")));
@@ -477,9 +479,9 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
     {
         ArrangeHouseholdsForEveryPeriod();
 
-        var popover = Render<MudPopoverProvider>();
+        IRenderedComponent<MudPopoverProvider> popover = Render<MudPopoverProvider>();
 
-        var cut = Render<Dashboard>();
+        IRenderedComponent<Dashboard> cut = Render<Dashboard>();
 
         cut.WaitForAssertion(() =>
             Assert.Single(cut.FindAll("[data-testid='dashboard-allocation']")));
@@ -508,7 +510,7 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
         IRenderedComponent<MudPopoverProvider> popover,
         Interval period)
     {
-        var select = cut.FindComponent<MudSelect<Interval>>();
+        IRenderedComponent<MudSelect<Interval>> select = cut.FindComponent<MudSelect<Interval>>();
         await cut.InvokeAsync(() => select.Instance.OpenMenu());
 
         popover.WaitForAssertion(() =>
