@@ -26,6 +26,9 @@ public class IncomePageTests : BunitContext, IAsyncLifetime
     private static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web);
 
     private readonly StubApiClient _apiClient = new();
+    private readonly FixedTimeProvider _clock =
+        new(new DateTimeOffset(2026, 10, 14, 0, 0, 0, TimeSpan.Zero));
+    private readonly PeriodSelectionService _periodSelection = new();
 
     public IncomePageTests()
     {
@@ -33,6 +36,10 @@ public class IncomePageTests : BunitContext, IAsyncLifetime
         JSInterop.Mode = JSRuntimeMode.Loose;
         Services.AddMudServices();
         Services.AddSingleton<IApiClient>(_apiClient);
+        Services.AddSingleton<TimeProvider>(_clock);
+        // The scoped service stands in for the circuit's single selection, so both pages rendered
+        // in one context share it.
+        Services.AddScoped<PeriodSelectionService>(_ => _periodSelection);
     }
 
     // The create/edit form renders MudBlazor inputs that resolve services which only implement
@@ -68,26 +75,45 @@ public class IncomePageTests : BunitContext, IAsyncLifetime
     }
 
     [Fact]
-    public void Income_Populated_SummaryEqualsTheSumOfTheListedEntries()
+    public void Income_Populated_SummaryCountsTheOccurrencesInsideTheSelectedPeriod()
     {
-        var entries = new[]
-        {
-            SampleIncome("Salary", 1500.00),
-            SampleIncome("Freelance", 250.50),
-            SampleIncome("Bonus", 1499.50)
-        };
-        ArrangeHouseholdWith(entries);
+        ArrangeHouseholdWith(
+            SampleIncome(
+                "B1",
+                100.00,
+                recurring: true,
+                interval: Interval.BiWeekly,
+                startDate: new DateTime(2026, 1, 5),
+                endDate: new DateTime(2026, 12, 31)),
+            SampleIncome(
+                "B2",
+                200.00,
+                recurring: true,
+                interval: Interval.Monthly,
+                startDate: new DateTime(2026, 1, 20),
+                endDate: new DateTime(2026, 12, 31)),
+            SampleIncome(
+                "B3",
+                120.00,
+                recurring: true,
+                interval: Interval.Yearly,
+                startDate: new DateTime(2026, 2, 1),
+                endDate: new DateTime(2026, 12, 31)));
 
         var cut = Render<IncomePage>();
 
-        // The expected total is derived from the same entries, so the assertion proves the summary
-        // is the sum of the listed income, not a hard-coded value.
-        var expectedTotal = MoneyFormatter.Format(entries.Sum(entry => entry.Value));
-
+        // Monthly is the default period, so B1 contributes two occurrences and B2 one; B3's only
+        // occurrence (1 February) is outside October.
         cut.WaitForAssertion(() =>
-            Assert.Equal(expectedTotal, cut.Find("[data-testid='income-total']").TextContent.Trim()));
-
-        Assert.Equal("$3,250.00", expectedTotal);
+        {
+            Assert.Equal("$400.00", cut.Find("[data-testid='income-total']").TextContent.Trim());
+            Assert.Equal(
+                "$400.00",
+                cut.Find("[data-testid='income-recurring-total']").TextContent.Trim());
+            Assert.Equal(
+                "$0.00",
+                cut.Find("[data-testid='income-one-off-total']").TextContent.Trim());
+        });
     }
 
     [Fact]
@@ -338,8 +364,16 @@ public class IncomePageTests : BunitContext, IAsyncLifetime
         cut.Find("[data-testid='income-form-name']").Input("Salary");
         cut.Find("[data-testid='income-form-value']").Change("1500");
 
-        // The save reloads the list from the backend, so make the backend return the new entry.
-        _apiClient.GetResponsesByPath[incomesPath] = new List<Income> { SampleIncome("Salary", 1500.00) };
+        // The save reloads the list from the backend. The form defaults to the pinned today, so
+        // the returned entry is a one-off through that date and counts in the monthly window.
+        _apiClient.GetResponsesByPath[incomesPath] = new List<Income>
+        {
+            SampleIncome(
+                "Salary",
+                1500.00,
+                startDate: new DateTime(2026, 10, 14),
+                endDate: new DateTime(2026, 10, 14))
+        };
 
         cut.Find("[data-testid='income-form-submit']").Click();
 
@@ -520,6 +554,254 @@ public class IncomePageTests : BunitContext, IAsyncLifetime
         Assert.Equal((int)Interval.Quarterly, body.RootElement.GetProperty("interval").GetInt32());
     }
 
+    [Fact]
+    public async Task Income_PeriodSelector_OffersTheSixIntervalsAndDefaultsToMonthly()
+    {
+        ArrangeHouseholdWith(AcceptedFixture());
+
+        // MudBlazor renders select options inside MudPopoverProvider, which the app layout supplies.
+        var popover = Render<MudPopoverProvider>();
+
+        var cut = Render<IncomePage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='income-summary']")));
+
+        Assert.NotEmpty(cut.FindAll("[data-testid='income-period']"));
+
+        var select = cut.FindComponent<MudSelect<Interval>>();
+        Assert.Contains(nameof(Interval.Monthly), select.Markup);
+
+        await cut.InvokeAsync(() => select.Instance.OpenMenu());
+
+        popover.WaitForAssertion(() =>
+        {
+            var labels = popover.FindAll("div.mud-list-item")
+                .Select(item => item.TextContent.Trim())
+                .ToList();
+            Assert.Equal(
+                new[] { "Daily", "Weekly", "BiWeekly", "Monthly", "Quarterly", "Yearly" },
+                labels);
+        });
+    }
+
+    [Theory]
+    [InlineData(Interval.Daily, "$0.00")]
+    [InlineData(Interval.Weekly, "$100.00")]
+    [InlineData(Interval.BiWeekly, "$300.00")]
+    [InlineData(Interval.Monthly, "$400.00")]
+    [InlineData(Interval.Quarterly, "$1,200.00")]
+    [InlineData(Interval.Yearly, "$5,120.00")]
+    public async Task Income_ChangingThePeriod_RecalculatesTheFiguresWithoutRefetching(
+        Interval period,
+        string expectedCombined)
+    {
+        ArrangeHouseholdWith(AcceptedFixture());
+        var popover = Render<MudPopoverProvider>();
+        var cut = Render<IncomePage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='income-summary']")));
+
+        var getsAfterLoad = _apiClient.Gets.Count;
+
+        await SelectPeriodAsync(cut, popover, period);
+
+        // The same fixture on Income produces the same figures as Bills, through one calculator.
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal(
+                expectedCombined,
+                cut.Find("[data-testid='income-total']").TextContent.Trim());
+            Assert.Equal(
+                expectedCombined,
+                cut.Find("[data-testid='income-recurring-total']").TextContent.Trim());
+            Assert.Equal(
+                "$0.00",
+                cut.Find("[data-testid='income-one-off-total']").TextContent.Trim());
+        });
+
+        Assert.Equal(getsAfterLoad, _apiClient.Gets.Count);
+    }
+
+    [Fact]
+    public async Task Income_OneOffFigure_IsCountedOnceAndNeverScaledByThePeriod()
+    {
+        ArrangeHouseholdWith(AcceptedFixture().Append(OneOffEntry()).ToArray());
+        var popover = Render<MudPopoverProvider>();
+        var cut = Render<IncomePage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='income-summary']")));
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal("$900.00", cut.Find("[data-testid='income-total']").TextContent.Trim());
+            Assert.Equal(
+                "$400.00",
+                cut.Find("[data-testid='income-recurring-total']").TextContent.Trim());
+            Assert.Equal(
+                "$500.00",
+                cut.Find("[data-testid='income-one-off-total']").TextContent.Trim());
+        });
+
+        await SelectPeriodAsync(cut, popover, Interval.Weekly);
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal("$600.00", cut.Find("[data-testid='income-total']").TextContent.Trim());
+            Assert.Equal(
+                "$100.00",
+                cut.Find("[data-testid='income-recurring-total']").TextContent.Trim());
+            // The one-off is still exactly one occurrence, not seven.
+            Assert.Equal(
+                "$500.00",
+                cut.Find("[data-testid='income-one-off-total']").TextContent.Trim());
+        });
+    }
+
+    [Theory]
+    [InlineData(Interval.Monthly, "$450.00")]
+    [InlineData(Interval.Quarterly, "$1,250.00")]
+    [InlineData(Interval.Yearly, "$5,620.00")]
+    public async Task Income_EndDateInsideTheSelectedWindow_StopsTheSeries(
+        Interval period,
+        string expectedCombined)
+    {
+        ArrangeHouseholdWith(AcceptedFixture().Append(EndingEntry()).ToArray());
+        var popover = Render<MudPopoverProvider>();
+        var cut = Render<IncomePage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='income-summary']")));
+
+        await SelectPeriodAsync(cut, popover, period);
+
+        cut.WaitForAssertion(() =>
+            Assert.Equal(
+                expectedCombined,
+                cut.Find("[data-testid='income-total']").TextContent.Trim()));
+    }
+
+    [Fact]
+    public async Task Income_RecurringWithNullInterval_IsCountedAsAOneOff()
+    {
+        ArrangeHouseholdWith(
+            SampleIncome(
+                "Allowance",
+                30.00,
+                recurring: true,
+                interval: null,
+                startDate: new DateTime(2026, 10, 14),
+                endDate: new DateTime(2026, 10, 14)));
+        var popover = Render<MudPopoverProvider>();
+        var cut = Render<IncomePage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='income-summary']")));
+
+        await SelectPeriodAsync(cut, popover, Interval.Daily);
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal("$30.00", cut.Find("[data-testid='income-total']").TextContent.Trim());
+            Assert.Equal(
+                "$0.00",
+                cut.Find("[data-testid='income-recurring-total']").TextContent.Trim());
+            Assert.Equal(
+                "$30.00",
+                cut.Find("[data-testid='income-one-off-total']").TextContent.Trim());
+        });
+    }
+
+    [Fact]
+    public void Income_EndDateBeforeStartDate_ContributesNothingAndDoesNotThrow()
+    {
+        ArrangeHouseholdWith(
+            SampleIncome(
+                "Broken",
+                500.00,
+                recurring: true,
+                interval: Interval.Monthly,
+                startDate: new DateTime(2026, 10, 14),
+                endDate: new DateTime(2026, 10, 1)));
+
+        var cut = Render<IncomePage>();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal("$0.00", cut.Find("[data-testid='income-total']").TextContent.Trim());
+            Assert.Equal(
+                "$0.00",
+                cut.Find("[data-testid='income-recurring-total']").TextContent.Trim());
+            Assert.Equal(
+                "$0.00",
+                cut.Find("[data-testid='income-one-off-total']").TextContent.Trim());
+        });
+
+        Assert.Empty(cut.FindAll("[data-testid='income-error']"));
+    }
+
+    /// <summary>
+    /// Selects a period through the summary control, exactly as a user would.
+    /// </summary>
+    /// <param name="cut">The rendered Income page.</param>
+    /// <param name="popover">The rendered popover host that holds the options.</param>
+    /// <param name="period">The period to select.</param>
+    private static async Task SelectPeriodAsync(
+        IRenderedComponent<IncomePage> cut,
+        IRenderedComponent<MudPopoverProvider> popover,
+        Interval period)
+    {
+        var select = cut.FindComponent<MudSelect<Interval>>();
+        await cut.InvokeAsync(() => select.Instance.OpenMenu());
+
+        popover.WaitForAssertion(() =>
+            Assert.NotEmpty(popover.FindAll("div.mud-list-item")));
+
+        popover.FindAll("div.mud-list-item")
+            .First(item => item.TextContent.Trim() == period.ToString())
+            .Click();
+
+        cut.WaitForAssertion(() =>
+            Assert.Contains(period.ToString(), cut.FindComponent<MudSelect<Interval>>().Markup));
+    }
+
+    // The accepted fixture from issue #47, with "now" pinned to 2026-10-14.
+    private static Income[] AcceptedFixture() =>
+        new[]
+        {
+            SampleIncome(
+                "B1",
+                100.00,
+                recurring: true,
+                interval: Interval.BiWeekly,
+                startDate: new DateTime(2026, 1, 5),
+                endDate: new DateTime(2026, 12, 31)),
+            SampleIncome(
+                "B2",
+                200.00,
+                recurring: true,
+                interval: Interval.Monthly,
+                startDate: new DateTime(2026, 1, 20),
+                endDate: new DateTime(2026, 12, 31)),
+            SampleIncome(
+                "B3",
+                120.00,
+                recurring: true,
+                interval: Interval.Yearly,
+                startDate: new DateTime(2026, 2, 1),
+                endDate: new DateTime(2026, 12, 31))
+        };
+
+    private static Income OneOffEntry() =>
+        SampleIncome(
+            "B4",
+            500.00,
+            recurring: false,
+            interval: null,
+            startDate: new DateTime(2026, 10, 14),
+            endDate: new DateTime(2026, 10, 14));
+
+    private static Income EndingEntry() =>
+        SampleIncome(
+            "B5",
+            50.00,
+            recurring: true,
+            interval: Interval.Monthly,
+            startDate: new DateTime(2026, 1, 20),
+            endDate: new DateTime(2026, 10, 20));
+
     /// <summary>
     /// Registers a single household and its income entries as the API responses, so the page's
     /// two-step load has a deterministic result.
@@ -540,19 +822,23 @@ public class IncomePageTests : BunitContext, IAsyncLifetime
     /// <param name="value">The entry's amount.</param>
     /// <param name="recurring">Whether the entry repeats.</param>
     /// <param name="interval">The cadence, or <see langword="null"/> for a one-off entry.</param>
+    /// <param name="startDate">The first date the entry applies, or 1 January 2026.</param>
+    /// <param name="endDate">The last date the entry applies, or 31 December 2026.</param>
     /// <returns>The income entry.</returns>
     private static Income SampleIncome(
         string name,
         double value,
         bool recurring = false,
-        Interval? interval = null) =>
+        Interval? interval = null,
+        DateTime? startDate = null,
+        DateTime? endDate = null) =>
         new()
         {
             Id = Guid.NewGuid(),
             Name = name,
             Value = value,
-            StartDate = new DateTime(2026, 1, 1),
-            EndDate = new DateTime(2026, 12, 31),
+            StartDate = startDate ?? new DateTime(2026, 1, 1),
+            EndDate = endDate ?? new DateTime(2026, 12, 31),
             Recurring = recurring,
             Interval = interval,
             UserId = Guid.NewGuid()

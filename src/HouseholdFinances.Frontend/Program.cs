@@ -36,6 +36,11 @@ builder.Services.AddHttpClient<IApiClient, ApiClient>(client =>
 
 // Frontend-only client services.
 builder.Services.AddScoped<ThemeService>();
+builder.Services.AddScoped<PeriodSelectionService>();
+
+// The only time source the pages use, so "now" is explicit and pinnable in tests. Its UTC clock
+// matches the assumption that windows are calendar dates in UTC.
+builder.Services.AddSingleton(TimeProvider.System);
 
 // Authentication entry point for the Login page. The Google ID token is obtained in the browser
 // through Google Identity Services (the interop boundary), and the Blazor Server host exchanges it

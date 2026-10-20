@@ -27,6 +27,9 @@ public class BillsPageTests : BunitContext, IAsyncLifetime
     private static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web);
 
     private readonly StubApiClient _apiClient = new();
+    private readonly FixedTimeProvider _clock =
+        new(new DateTimeOffset(2026, 10, 14, 0, 0, 0, TimeSpan.Zero));
+    private readonly PeriodSelectionService _periodSelection = new();
 
     public BillsPageTests()
     {
@@ -34,6 +37,10 @@ public class BillsPageTests : BunitContext, IAsyncLifetime
         JSInterop.Mode = JSRuntimeMode.Loose;
         Services.AddMudServices();
         Services.AddSingleton<IApiClient>(_apiClient);
+        Services.AddSingleton<TimeProvider>(_clock);
+        // The scoped service stands in for the circuit's single selection, so both pages rendered
+        // in one context share it.
+        Services.AddScoped<PeriodSelectionService>(_ => _periodSelection);
     }
 
     // The create/edit form renders MudBlazor inputs that resolve services which only implement
@@ -69,26 +76,45 @@ public class BillsPageTests : BunitContext, IAsyncLifetime
     }
 
     [Fact]
-    public void Bills_Populated_SummaryEqualsTheSumOfTheListedBills()
+    public void Bills_Populated_SummaryCountsTheOccurrencesInsideTheSelectedPeriod()
     {
-        var bills = new[]
-        {
-            SampleBill("Rent", 1200.00),
-            SampleBill("Internet", 59.99),
-            SampleBill("Insurance", 240.01)
-        };
-        ArrangeHouseholdWith(bills);
+        ArrangeHouseholdWith(
+            SampleBill(
+                "B1",
+                100.00,
+                recurring: true,
+                interval: Interval.BiWeekly,
+                startDate: new DateTime(2026, 1, 5),
+                endDate: new DateTime(2026, 12, 31)),
+            SampleBill(
+                "B2",
+                200.00,
+                recurring: true,
+                interval: Interval.Monthly,
+                startDate: new DateTime(2026, 1, 20),
+                endDate: new DateTime(2026, 12, 31)),
+            SampleBill(
+                "B3",
+                120.00,
+                recurring: true,
+                interval: Interval.Yearly,
+                startDate: new DateTime(2026, 2, 1),
+                endDate: new DateTime(2026, 12, 31)));
 
         var cut = Render<BillsPage>();
 
-        // The expected total is derived from the same bills, so the assertion proves the summary is
-        // the sum of the listed bills, not a hard-coded value.
-        var expectedTotal = MoneyFormatter.Format(bills.Sum(bill => bill.Value));
-
+        // Monthly is the default period, so B1 contributes two occurrences and B2 one; B3's only
+        // occurrence (1 February) is outside October.
         cut.WaitForAssertion(() =>
-            Assert.Equal(expectedTotal, cut.Find("[data-testid='bills-total']").TextContent.Trim()));
-
-        Assert.Equal("$1,500.00", expectedTotal);
+        {
+            Assert.Equal("$400.00", cut.Find("[data-testid='bills-total']").TextContent.Trim());
+            Assert.Equal(
+                "$400.00",
+                cut.Find("[data-testid='bills-recurring-total']").TextContent.Trim());
+            Assert.Equal(
+                "$0.00",
+                cut.Find("[data-testid='bills-one-off-total']").TextContent.Trim());
+        });
     }
 
     [Fact]
@@ -339,8 +365,16 @@ public class BillsPageTests : BunitContext, IAsyncLifetime
         cut.Find("[data-testid='bills-form-name']").Input("Rent");
         cut.Find("[data-testid='bills-form-value']").Change("1200");
 
-        // The save reloads the list from the backend, so make the backend return the new bill.
-        _apiClient.GetResponsesByPath[billsPath] = new List<Bill> { SampleBill("Rent", 1200.00) };
+        // The save reloads the list from the backend. The form defaults to the pinned today, so
+        // the returned bill is a one-off through that date and counts in the monthly window.
+        _apiClient.GetResponsesByPath[billsPath] = new List<Bill>
+        {
+            SampleBill(
+                "Rent",
+                1200.00,
+                startDate: new DateTime(2026, 10, 14),
+                endDate: new DateTime(2026, 10, 14))
+        };
 
         cut.Find("[data-testid='bills-form-submit']").Click();
 
@@ -521,6 +555,252 @@ public class BillsPageTests : BunitContext, IAsyncLifetime
         Assert.Equal((int)Interval.Monthly, body.RootElement.GetProperty("interval").GetInt32());
     }
 
+    [Fact]
+    public async Task Bills_PeriodSelector_OffersTheSixIntervalsAndDefaultsToMonthly()
+    {
+        ArrangeHouseholdWith(AcceptedFixture());
+
+        // MudBlazor renders select options inside MudPopoverProvider, which the app layout supplies.
+        var popover = Render<MudPopoverProvider>();
+
+        var cut = Render<BillsPage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='bills-summary']")));
+
+        Assert.NotEmpty(cut.FindAll("[data-testid='bills-period']"));
+
+        var select = cut.FindComponent<MudSelect<Interval>>();
+        Assert.Contains(nameof(Interval.Monthly), select.Markup);
+
+        await cut.InvokeAsync(() => select.Instance.OpenMenu());
+
+        popover.WaitForAssertion(() =>
+        {
+            var labels = popover.FindAll("div.mud-list-item")
+                .Select(item => item.TextContent.Trim())
+                .ToList();
+            Assert.Equal(
+                new[] { "Daily", "Weekly", "BiWeekly", "Monthly", "Quarterly", "Yearly" },
+                labels);
+        });
+    }
+
+    [Theory]
+    [InlineData(Interval.Daily, "$0.00")]
+    [InlineData(Interval.Weekly, "$100.00")]
+    [InlineData(Interval.BiWeekly, "$300.00")]
+    [InlineData(Interval.Monthly, "$400.00")]
+    [InlineData(Interval.Quarterly, "$1,200.00")]
+    [InlineData(Interval.Yearly, "$5,120.00")]
+    public async Task Bills_ChangingThePeriod_RecalculatesTheFiguresWithoutRefetching(
+        Interval period,
+        string expectedCombined)
+    {
+        ArrangeHouseholdWith(AcceptedFixture());
+        var popover = Render<MudPopoverProvider>();
+        var cut = Render<BillsPage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='bills-summary']")));
+
+        var getsAfterLoad = _apiClient.Gets.Count;
+
+        await SelectPeriodAsync(cut, popover, period);
+
+        // The fixture is entirely recurring, so the recurring total equals the combined figure.
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal(expectedCombined, cut.Find("[data-testid='bills-total']").TextContent.Trim());
+            Assert.Equal(
+                expectedCombined,
+                cut.Find("[data-testid='bills-recurring-total']").TextContent.Trim());
+            Assert.Equal(
+                "$0.00",
+                cut.Find("[data-testid='bills-one-off-total']").TextContent.Trim());
+        });
+
+        // Switching the period re-renders from the loaded rows; it never refetches.
+        Assert.Equal(getsAfterLoad, _apiClient.Gets.Count);
+    }
+
+    [Fact]
+    public async Task Bills_OneOffFigure_IsCountedOnceAndNeverScaledByThePeriod()
+    {
+        ArrangeHouseholdWith(AcceptedFixture().Append(OneOffBill()).ToArray());
+        var popover = Render<MudPopoverProvider>();
+        var cut = Render<BillsPage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='bills-summary']")));
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal("$900.00", cut.Find("[data-testid='bills-total']").TextContent.Trim());
+            Assert.Equal(
+                "$400.00",
+                cut.Find("[data-testid='bills-recurring-total']").TextContent.Trim());
+            Assert.Equal(
+                "$500.00",
+                cut.Find("[data-testid='bills-one-off-total']").TextContent.Trim());
+        });
+
+        await SelectPeriodAsync(cut, popover, Interval.Weekly);
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal("$600.00", cut.Find("[data-testid='bills-total']").TextContent.Trim());
+            Assert.Equal(
+                "$100.00",
+                cut.Find("[data-testid='bills-recurring-total']").TextContent.Trim());
+            // The one-off is still exactly one occurrence, not seven.
+            Assert.Equal(
+                "$500.00",
+                cut.Find("[data-testid='bills-one-off-total']").TextContent.Trim());
+        });
+    }
+
+    [Theory]
+    [InlineData(Interval.Monthly, "$450.00")]
+    [InlineData(Interval.Quarterly, "$1,250.00")]
+    [InlineData(Interval.Yearly, "$5,620.00")]
+    public async Task Bills_EndDateInsideTheSelectedWindow_StopsTheSeries(
+        Interval period,
+        string expectedCombined)
+    {
+        ArrangeHouseholdWith(AcceptedFixture().Append(EndingBill()).ToArray());
+        var popover = Render<MudPopoverProvider>();
+        var cut = Render<BillsPage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='bills-summary']")));
+
+        await SelectPeriodAsync(cut, popover, period);
+
+        cut.WaitForAssertion(() =>
+            Assert.Equal(expectedCombined, cut.Find("[data-testid='bills-total']").TextContent.Trim()));
+    }
+
+    [Fact]
+    public async Task Bills_RecurringWithNullInterval_IsCountedAsAOneOff()
+    {
+        ArrangeHouseholdWith(
+            SampleBill(
+                "Allowance",
+                30.00,
+                recurring: true,
+                interval: null,
+                startDate: new DateTime(2026, 10, 14),
+                endDate: new DateTime(2026, 10, 14)));
+        var popover = Render<MudPopoverProvider>();
+        var cut = Render<BillsPage>();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='bills-summary']")));
+
+        await SelectPeriodAsync(cut, popover, Interval.Daily);
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal("$30.00", cut.Find("[data-testid='bills-total']").TextContent.Trim());
+            Assert.Equal(
+                "$0.00",
+                cut.Find("[data-testid='bills-recurring-total']").TextContent.Trim());
+            Assert.Equal(
+                "$30.00",
+                cut.Find("[data-testid='bills-one-off-total']").TextContent.Trim());
+        });
+    }
+
+    [Fact]
+    public void Bills_EndDateBeforeStartDate_ContributesNothingAndDoesNotThrow()
+    {
+        ArrangeHouseholdWith(
+            SampleBill(
+                "Broken",
+                500.00,
+                recurring: true,
+                interval: Interval.Monthly,
+                startDate: new DateTime(2026, 10, 14),
+                endDate: new DateTime(2026, 10, 1)));
+
+        var cut = Render<BillsPage>();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal("$0.00", cut.Find("[data-testid='bills-total']").TextContent.Trim());
+            Assert.Equal(
+                "$0.00",
+                cut.Find("[data-testid='bills-recurring-total']").TextContent.Trim());
+            Assert.Equal(
+                "$0.00",
+                cut.Find("[data-testid='bills-one-off-total']").TextContent.Trim());
+        });
+
+        // The invalid range is not an error state; the rest of the page still renders.
+        Assert.Empty(cut.FindAll("[data-testid='bills-error']"));
+    }
+
+    /// <summary>
+    /// Selects a period through the summary control, exactly as a user would.
+    /// </summary>
+    /// <param name="cut">The rendered Bills page.</param>
+    /// <param name="popover">The rendered popover host that holds the options.</param>
+    /// <param name="period">The period to select.</param>
+    private static async Task SelectPeriodAsync(
+        IRenderedComponent<BillsPage> cut,
+        IRenderedComponent<MudPopoverProvider> popover,
+        Interval period)
+    {
+        var select = cut.FindComponent<MudSelect<Interval>>();
+        await cut.InvokeAsync(() => select.Instance.OpenMenu());
+
+        popover.WaitForAssertion(() =>
+            Assert.NotEmpty(popover.FindAll("div.mud-list-item")));
+
+        popover.FindAll("div.mud-list-item")
+            .First(item => item.TextContent.Trim() == period.ToString())
+            .Click();
+
+        cut.WaitForAssertion(() =>
+            Assert.Contains(period.ToString(), cut.FindComponent<MudSelect<Interval>>().Markup));
+    }
+
+    // The accepted bills fixture from issue #47, with "now" pinned to 2026-10-14.
+    private static Bill[] AcceptedFixture() =>
+        new[]
+        {
+            SampleBill(
+                "B1",
+                100.00,
+                recurring: true,
+                interval: Interval.BiWeekly,
+                startDate: new DateTime(2026, 1, 5),
+                endDate: new DateTime(2026, 12, 31)),
+            SampleBill(
+                "B2",
+                200.00,
+                recurring: true,
+                interval: Interval.Monthly,
+                startDate: new DateTime(2026, 1, 20),
+                endDate: new DateTime(2026, 12, 31)),
+            SampleBill(
+                "B3",
+                120.00,
+                recurring: true,
+                interval: Interval.Yearly,
+                startDate: new DateTime(2026, 2, 1),
+                endDate: new DateTime(2026, 12, 31))
+        };
+
+    private static Bill OneOffBill() =>
+        SampleBill(
+            "B4",
+            500.00,
+            recurring: false,
+            interval: null,
+            startDate: new DateTime(2026, 10, 14),
+            endDate: new DateTime(2026, 10, 14));
+
+    private static Bill EndingBill() =>
+        SampleBill(
+            "B5",
+            50.00,
+            recurring: true,
+            interval: Interval.Monthly,
+            startDate: new DateTime(2026, 1, 20),
+            endDate: new DateTime(2026, 10, 20));
+
     /// <summary>
     /// Registers a single household and its bills as the API responses, so the page's two-step load
     /// has a deterministic result.
@@ -541,19 +821,23 @@ public class BillsPageTests : BunitContext, IAsyncLifetime
     /// <param name="value">The bill's amount.</param>
     /// <param name="recurring">Whether the bill repeats.</param>
     /// <param name="interval">The cadence, or <see langword="null"/> for a one-off bill.</param>
+    /// <param name="startDate">The first date the bill applies, or 1 January 2026.</param>
+    /// <param name="endDate">The last date the bill applies, or 31 December 2026.</param>
     /// <returns>The bill.</returns>
     private static Bill SampleBill(
         string name,
         double value,
         bool recurring = false,
-        Interval? interval = null) =>
+        Interval? interval = null,
+        DateTime? startDate = null,
+        DateTime? endDate = null) =>
         new()
         {
             Id = Guid.NewGuid(),
             Name = name,
             Value = value,
-            StartDate = new DateTime(2026, 1, 1),
-            EndDate = new DateTime(2026, 12, 31),
+            StartDate = startDate ?? new DateTime(2026, 1, 1),
+            EndDate = endDate ?? new DateTime(2026, 12, 31),
             Recurring = recurring,
             Interval = interval,
             HouseholdId = Guid.NewGuid(),
