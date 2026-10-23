@@ -1,3 +1,4 @@
+using System.Text.Json;
 using HouseholdFinances.Frontend.Models;
 
 namespace HouseholdFinances.Frontend.Tests.Models;
@@ -200,5 +201,53 @@ public class EntityModelTests
         Assert.Equal(householdId, goal.HouseholdId);
         Assert.Equal(userId, goal.UserId);
         Assert.Equal(1250.00, goal.Total);
+    }
+
+    [Fact]
+    public void Goal_DeserializesNullIntervalAsNull()
+    {
+        const string json = """
+            {
+              "id": "9b2f3c1e-4d5a-4e6f-8a7b-0c1d2e3f4a5b",
+              "name": "Emergency fund",
+              "value": 10000,
+              "startDate": "2026-01-01T00:00:00Z",
+              "endDate": "2026-12-31T00:00:00Z",
+              "recurring": false,
+              "interval": null,
+              "householdId": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+              "userId": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e",
+              "total": 0
+            }
+            """;
+
+        var goal = JsonSerializer.Deserialize<Goal>(
+            json,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        Assert.NotNull(goal);
+        Assert.Null(goal!.Interval);
+    }
+
+    [Fact]
+    public void Goal_RoundTripsDefinedInterval()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        var goal = new Goal
+        {
+            Name = "Holiday",
+            Value = 1000.00,
+            StartDate = new DateTime(2026, 1, 5),
+            EndDate = new DateTime(2026, 12, 31),
+            Recurring = true,
+            Interval = Interval.BiWeekly
+        };
+
+        var json = JsonSerializer.Serialize(goal, options);
+        var roundTripped = JsonSerializer.Deserialize<Goal>(json, options);
+
+        Assert.Contains("\"interval\":2", json);
+        Assert.NotNull(roundTripped);
+        Assert.Equal(Interval.BiWeekly, roundTripped!.Interval);
     }
 }
