@@ -36,8 +36,8 @@ public static class MoneyFormatter
     /// <returns>The formatted amount, with the sign (when negative) placed before the symbol.</returns>
     public static string Format(double value)
     {
-        var rounded = Round(value);
-        var magnitude = Math.Abs(rounded).ToString(AmountFormat, CultureInfo.InvariantCulture);
+        double rounded = Round(value);
+        string magnitude = Math.Abs(rounded).ToString(AmountFormat, CultureInfo.InvariantCulture);
 
         // Place the sign before the currency symbol ("-$40.00") rather than after ("$-40.00").
         return rounded < 0 ? $"-{CurrencySymbol}{magnitude}" : $"{CurrencySymbol}{magnitude}";

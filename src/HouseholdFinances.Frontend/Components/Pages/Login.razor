@@ -64,7 +64,7 @@
 
         try
         {
-            var result = await AuthenticationService.SignInAsync();
+            AuthenticationResult result = await AuthenticationService.SignInAsync();
 
             if (result.Succeeded)
             {

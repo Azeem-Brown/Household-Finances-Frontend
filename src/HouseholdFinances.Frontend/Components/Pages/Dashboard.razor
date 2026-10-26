@@ -272,8 +272,8 @@ else
         _funMoneyError = null;
         _allocationErrorMessage = null;
 
-        var savings = MoneyFormatter.Round(_savings);
-        var funMoney = MoneyFormatter.Round(_funMoney);
+        double savings = MoneyFormatter.Round(_savings);
+        double funMoney = MoneyFormatter.Round(_funMoney);
 
         _savingsError = savings < 0 ? NegativeAmountMessage : null;
         _funMoneyError = funMoney < 0 ? NegativeAmountMessage : null;

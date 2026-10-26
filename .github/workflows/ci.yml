@@ -26,6 +26,15 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - name: Guard Razor code against var
+        run: |
+          # The .editorconfig explicit-type rule only reaches compiled C#, not Razor @code blocks,
+          # so this catches a var introduced in a component (issue #66).
+          if grep -rnE '^[[:space:]]+var[[:space:]]+[A-Za-z_]' src --include='*.razor'; then
+            echo "::error::Use an explicit type instead of var in Razor code blocks (issue #66)."
+            exit 1
+          fi
+
       - name: Restore
         run: dotnet restore HouseholdFinances.slnx
 

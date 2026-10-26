@@ -48,7 +48,7 @@ public sealed class ApiClient : IApiClient
     /// <inheritdoc />
     public async Task PostAsync<TRequest>(string path, TRequest body, CancellationToken cancellationToken = default)
     {
-        using var response = await SendAuthenticatedRawAsync(HttpMethod.Post, path, body, cancellationToken);
+        using HttpResponseMessage response = await SendAuthenticatedRawAsync(HttpMethod.Post, path, body, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
     }
 
@@ -63,14 +63,14 @@ public sealed class ApiClient : IApiClient
     /// <inheritdoc />
     public async Task DeleteAsync(string path, CancellationToken cancellationToken = default)
     {
-        using var response = await SendAuthenticatedRawAsync(HttpMethod.Delete, path, body: null, cancellationToken);
+        using HttpResponseMessage response = await SendAuthenticatedRawAsync(HttpMethod.Delete, path, body: null, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
     }
 
     /// <inheritdoc />
     public async Task<TResponse> PostAnonymousAsync<TRequest, TResponse>(string path, TRequest body, CancellationToken cancellationToken = default)
     {
-        using var response = await SendAsync(HttpMethod.Post, path, body, accessToken: null, cancellationToken);
+        using HttpResponseMessage response = await SendAsync(HttpMethod.Post, path, body, accessToken: null, cancellationToken);
         return await ReadRequiredAsync<TResponse>(response, cancellationToken);
     }
 
@@ -80,7 +80,7 @@ public sealed class ApiClient : IApiClient
         object? body,
         CancellationToken cancellationToken)
     {
-        using var response = await SendAuthenticatedRawAsync(method, path, body, cancellationToken);
+        using HttpResponseMessage response = await SendAuthenticatedRawAsync(method, path, body, cancellationToken);
         return await ReadRequiredAsync<TResponse>(response, cancellationToken);
     }
 
@@ -90,8 +90,8 @@ public sealed class ApiClient : IApiClient
         object? body,
         CancellationToken cancellationToken)
     {
-        var tokens = await _tokenStore.GetAsync(cancellationToken);
-        var response = await SendAsync(method, path, body, tokens?.AccessToken, cancellationToken);
+        TokenPair? tokens = await _tokenStore.GetAsync(cancellationToken);
+        HttpResponseMessage response = await SendAsync(method, path, body, tokens?.AccessToken, cancellationToken);
 
         if (response.StatusCode != HttpStatusCode.Unauthorized ||
             string.IsNullOrEmpty(tokens?.RefreshToken))
@@ -103,7 +103,7 @@ public sealed class ApiClient : IApiClient
         // retry the original request once with the replacement token.
         response.Dispose();
 
-        var refreshed = await RefreshAsync(tokens!.RefreshToken!, path, cancellationToken);
+        TokenPair refreshed = await RefreshAsync(tokens!.RefreshToken!, path, cancellationToken);
         await _tokenStore.SetAsync(refreshed, cancellationToken);
 
         return await SendAsync(method, path, body, refreshed.AccessToken, cancellationToken);
@@ -135,7 +135,7 @@ public sealed class ApiClient : IApiClient
 
         using (response)
         {
-            var refreshed = response.IsSuccessStatusCode
+            TokenPair? refreshed = response.IsSuccessStatusCode
                 ? await TryReadAsync<TokenPair>(response, cancellationToken)
                 : null;
 
@@ -166,7 +166,7 @@ public sealed class ApiClient : IApiClient
         string? accessToken,
         CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(method, path);
+        using HttpRequestMessage request = new HttpRequestMessage(method, path);
 
         if (body is not null)
         {
@@ -247,28 +247,28 @@ public sealed class ApiClient : IApiClient
         HttpResponseMessage response,
         CancellationToken cancellationToken)
     {
-        var identifier = (object)(int)response.StatusCode;
-        var errorCode = ClientErrorCode.Unknown;
+        object identifier = (object)(int)response.StatusCode;
+        ClientErrorCode errorCode = ClientErrorCode.Unknown;
 
-        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        string body = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!string.IsNullOrWhiteSpace(body))
         {
             try
             {
-                using var document = JsonDocument.Parse(body);
-                var root = document.RootElement;
+                using JsonDocument document = JsonDocument.Parse(body);
+                JsonElement root = document.RootElement;
 
                 // Only a body carrying a numeric errorCode is treated as the problem+json
                 // convention; anything else falls back to Unknown with the HTTP status.
                 if (root.ValueKind == JsonValueKind.Object &&
-                    root.TryGetProperty("errorCode", out var errorCodeElement) &&
-                    errorCodeElement.TryGetInt32(out var numericErrorCode))
+                    root.TryGetProperty("errorCode", out JsonElement errorCodeElement) &&
+                    errorCodeElement.TryGetInt32(out int numericErrorCode))
                 {
                     errorCode = MapErrorCode(numericErrorCode);
 
-                    if (root.TryGetProperty("identifier", out var identifierElement))
+                    if (root.TryGetProperty("identifier", out JsonElement identifierElement))
                     {
-                        var identifierText = identifierElement.ValueKind == JsonValueKind.String
+                        string? identifierText = identifierElement.ValueKind == JsonValueKind.String
                             ? identifierElement.GetString()
                             : identifierElement.ToString();
 

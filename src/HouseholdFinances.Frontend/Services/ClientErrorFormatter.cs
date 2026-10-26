@@ -22,7 +22,7 @@ public static class ClientErrorFormatter
     {
         ArgumentNullException.ThrowIfNull(identifier);
 
-        var identifierText = Convert.ToString(identifier, CultureInfo.InvariantCulture);
+        string? identifierText = Convert.ToString(identifier, CultureInfo.InvariantCulture);
 
         return $"{errorCode} {identifierText}";
     }

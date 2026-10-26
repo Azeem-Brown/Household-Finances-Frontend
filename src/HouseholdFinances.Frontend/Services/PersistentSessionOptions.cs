@@ -79,7 +79,7 @@ public sealed class PersistentSessionOptions
 
     private static string ResolveDirectory(string? configured, string fallback, string configurationKey)
     {
-        var value = string.IsNullOrWhiteSpace(configured) ? fallback : configured.Trim();
+        string value = string.IsNullOrWhiteSpace(configured) ? fallback : configured.Trim();
 
         if (!Path.IsPathRooted(value))
         {
@@ -97,7 +97,7 @@ public sealed class PersistentSessionOptions
             return DefaultCookieMaxAgeDays;
         }
 
-        if (!int.TryParse(configured, NumberStyles.Integer, CultureInfo.InvariantCulture, out var days) ||
+        if (!int.TryParse(configured, NumberStyles.Integer, CultureInfo.InvariantCulture, out int days) ||
             days < 1 ||
             days > MaximumCookieMaxAgeDays)
         {

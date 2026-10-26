@@ -35,7 +35,7 @@ public sealed class GoogleIdentityInterop : IGoogleIdentityProvider, IAsyncDispo
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(clientId);
 
-        var module = await GetModuleAsync(cancellationToken);
+        IJSObjectReference module = await GetModuleAsync(cancellationToken);
         return await module.InvokeAsync<string?>(GetIdTokenFunction, cancellationToken, clientId);
     }
 

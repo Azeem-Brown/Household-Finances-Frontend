@@ -102,8 +102,8 @@ public static class OccurrenceCalculator
     /// <returns>The occurrences in ascending date order, bounded by the entry's own dates.</returns>
     public static IReadOnlyList<DateOnly> Occurrences(MoneyEntry entry)
     {
-        var start = ToDate(entry.StartDate);
-        var end = ToDate(entry.EndDate);
+        DateOnly start = ToDate(entry.StartDate);
+        DateOnly end = ToDate(entry.EndDate);
 
         if (end < start)
         {
@@ -124,8 +124,8 @@ public static class OccurrenceCalculator
     /// <returns>The occurrences inside the window, in ascending date order.</returns>
     public static IReadOnlyList<DateOnly> OccurrencesInWindow(MoneyEntry entry, CalendarWindow window)
     {
-        var start = ToDate(entry.StartDate);
-        var end = ToDate(entry.EndDate);
+        DateOnly start = ToDate(entry.StartDate);
+        DateOnly end = ToDate(entry.EndDate);
 
         if (end < start)
         {
@@ -154,9 +154,9 @@ public static class OccurrenceCalculator
         double recurring = 0;
         double oneOff = 0;
 
-        foreach (var entry in entries)
+        foreach (MoneyEntry entry in entries)
         {
-            var count = OccurrencesInWindow(entry, window).Count;
+            int count = OccurrencesInWindow(entry, window).Count;
             if (count == 0)
             {
                 continue;
@@ -192,8 +192,8 @@ public static class OccurrenceCalculator
 
     private static CalendarWindow QuarterWindow(DateOnly today)
     {
-        var firstMonth = (((today.Month - 1) / 3) * 3) + 1;
-        var start = new DateOnly(today.Year, firstMonth, 1);
+        int firstMonth = (((today.Month - 1) / 3) * 3) + 1;
+        DateOnly start = new DateOnly(today.Year, firstMonth, 1);
 
         // Three months from the first day, less one day, is the quarter's last day.
         return new CalendarWindow(start, start.AddMonths(3).AddDays(-1));
@@ -209,15 +209,15 @@ public static class OccurrenceCalculator
         Interval interval,
         CalendarWindow window)
     {
-        var limit = end < window.End ? end : window.End;
+        DateOnly limit = end < window.End ? end : window.End;
         if (limit < start || limit < window.Start)
         {
             return Array.Empty<DateOnly>();
         }
 
-        var occurrences = new List<DateOnly>();
-        var step = FirstStepAtOrAfter(start, interval, window.Start);
-        var occurrence = Step(start, interval, step);
+        List<DateOnly> occurrences = new List<DateOnly>();
+        int step = FirstStepAtOrAfter(start, interval, window.Start);
+        DateOnly occurrence = Step(start, interval, step);
 
         // The arithmetic estimate may land just before the window; walk forward until it is inside.
         while (occurrence < window.Start)
@@ -247,13 +247,13 @@ public static class OccurrenceCalculator
             return 0;
         }
 
-        if (TryDaysPerStep(interval, out var days))
+        if (TryDaysPerStep(interval, out int days))
         {
             return (target.DayNumber - start.DayNumber) / days;
         }
 
-        var stepMonths = MonthsPerStep(interval);
-        var elapsedMonths = ((target.Year - start.Year) * 12) + target.Month - start.Month;
+        int stepMonths = MonthsPerStep(interval);
+        int elapsedMonths = ((target.Year - start.Year) * 12) + target.Month - start.Month;
 
         return Math.Max(0, elapsedMonths / stepMonths);
     }

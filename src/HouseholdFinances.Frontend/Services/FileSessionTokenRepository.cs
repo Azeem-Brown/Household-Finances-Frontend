@@ -65,7 +65,7 @@ public sealed class FileSessionTokenRepository : ISessionTokenRepository
     {
         ArgumentException.ThrowIfNullOrEmpty(sessionId);
 
-        var path = GetRecordPath(sessionId);
+        string path = GetRecordPath(sessionId);
 
         byte[] protectedRecord;
         try
@@ -116,8 +116,8 @@ public sealed class FileSessionTokenRepository : ISessionTokenRepository
         ArgumentException.ThrowIfNullOrEmpty(sessionId);
         ArgumentNullException.ThrowIfNull(tokens);
 
-        var path = GetRecordPath(sessionId);
-        var protectedRecord = _protector.Protect(JsonSerializer.SerializeToUtf8Bytes(tokens, JsonOptions));
+        string path = GetRecordPath(sessionId);
+        byte[] protectedRecord = _protector.Protect(JsonSerializer.SerializeToUtf8Bytes(tokens, JsonOptions));
 
         await _writeLock.WaitAsync(cancellationToken);
         try
@@ -126,7 +126,7 @@ public sealed class FileSessionTokenRepository : ISessionTokenRepository
 
             // Write beside the record and move it into place, so a concurrent read never sees a
             // half-written file and a crash cannot leave a corrupt record behind.
-            var temporaryPath = $"{path}.{Guid.NewGuid():N}.tmp";
+            string temporaryPath = $"{path}.{Guid.NewGuid():N}.tmp";
             try
             {
                 await File.WriteAllBytesAsync(temporaryPath, protectedRecord, cancellationToken);
@@ -148,7 +148,7 @@ public sealed class FileSessionTokenRepository : ISessionTokenRepository
     {
         ArgumentException.ThrowIfNullOrEmpty(sessionId);
 
-        var path = GetRecordPath(sessionId);
+        string path = GetRecordPath(sessionId);
 
         await _writeLock.WaitAsync(cancellationToken);
         try
@@ -176,10 +176,10 @@ public sealed class FileSessionTokenRepository : ISessionTokenRepository
             return Task.FromResult(0);
         }
 
-        var cutoff = _timeProvider.GetUtcNow() - _options.CookieMaxAge;
-        var removed = 0;
+        DateTimeOffset cutoff = _timeProvider.GetUtcNow() - _options.CookieMaxAge;
+        int removed = 0;
 
-        foreach (var record in new DirectoryInfo(_options.Directory).EnumerateFiles("*" + FileExtension))
+        foreach (FileInfo record in new DirectoryInfo(_options.Directory).EnumerateFiles("*" + FileExtension))
         {
             if (record.LastWriteTimeUtc >= cutoff.UtcDateTime)
             {
