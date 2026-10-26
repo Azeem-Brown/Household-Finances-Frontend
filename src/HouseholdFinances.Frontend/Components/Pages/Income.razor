@@ -108,7 +108,7 @@ else
                                    Error="_intervalError is not null"
                                    ErrorText="@_intervalError"
                                    data-testid="income-interval">
-                            @foreach (var interval in Intervals)
+                            @foreach (Interval interval in Intervals)
                             {
                                 <MudSelectItem T="Interval?" Value="@interval">@interval</MudSelectItem>
                             }
@@ -154,7 +154,7 @@ else
                            Dense="true"
                            Style="min-width: 12rem;"
                            data-testid="income-period">
-                    @foreach (var interval in Intervals)
+                    @foreach (Interval interval in Intervals)
                     {
                         <MudSelectItem T="Interval" Value="@interval">@interval</MudSelectItem>
                     }
@@ -460,7 +460,7 @@ else
         {
             // A one-off entry never carries a cadence, matching the backend, which stores NULL for a
             // non-recurring interval.
-            var request = new IncomeRequest(
+            IncomeRequest request = new IncomeRequest(
                 _name!.Trim(),
                 _value,
                 _startDate!.Value,
@@ -540,7 +540,7 @@ else
 
         try
         {
-            var households = await ApiClient.GetAsync<IReadOnlyList<Household>>(HouseholdsPath);
+            IReadOnlyList<Household> households = await ApiClient.GetAsync<IReadOnlyList<Household>>(HouseholdsPath);
 
             // The backend returns the list ordered by name. Income is nested under a single
             // household, so this page takes the same first household the dashboard summarises,

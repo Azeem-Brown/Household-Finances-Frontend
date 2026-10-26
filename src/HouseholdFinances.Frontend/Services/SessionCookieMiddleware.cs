@@ -70,12 +70,12 @@ public sealed class SessionCookieMiddleware
             return;
         }
 
-        var presented = context.Request.Cookies[CookieName];
-        var sessionId = IsWellFormed(presented) ? presented! : CreateSessionId();
+        string? presented = context.Request.Cookies[CookieName];
+        string sessionId = IsWellFormed(presented) ? presented! : CreateSessionId();
 
         if (sessionId == presented && !_activeSessions.IsActive(sessionId))
         {
-            var stored = await _repository.GetAsync(sessionId, context.RequestAborted);
+            TokenPair? stored = await _repository.GetAsync(sessionId, context.RequestAborted);
             if (stored is null)
             {
                 // The circuit could not delete the cookie when it cleared the record, so the

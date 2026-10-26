@@ -29,9 +29,9 @@ public sealed class ActiveSessionRegistry
     {
         ArgumentException.ThrowIfNullOrEmpty(sessionId);
 
-        while (_active.TryGetValue(sessionId, out var count))
+        while (_active.TryGetValue(sessionId, out int count))
         {
-            var released = count <= 1
+            bool released = count <= 1
                 ? _active.TryRemove(new KeyValuePair<string, int>(sessionId, count))
                 : _active.TryUpdate(sessionId, count - 1, count);
 

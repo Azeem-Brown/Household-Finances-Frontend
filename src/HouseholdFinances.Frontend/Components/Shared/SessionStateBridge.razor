@@ -17,7 +17,7 @@
     {
         // The interactive circuit receives the value registered during prerendering. Taking it
         // here is also how this component knows it is no longer prerendering.
-        if (PersistentState.TryTakeFromJson<string>(PersistedStateKey, out var persisted) &&
+        if (PersistentState.TryTakeFromJson<string>(PersistedStateKey, out string? persisted) &&
             !string.IsNullOrEmpty(persisted))
         {
             SessionIdAccessor.SetSessionId(persisted);
@@ -35,7 +35,7 @@
             return;
         }
 
-        var sessionId = SessionCookieMiddleware.GetSessionId(HttpContextAccessor.HttpContext);
+        string? sessionId = SessionCookieMiddleware.GetSessionId(HttpContextAccessor.HttpContext);
         if (string.IsNullOrEmpty(sessionId))
         {
             return;

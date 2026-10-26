@@ -68,7 +68,7 @@ public sealed class GoogleAuthenticationService : IAuthenticationService
     {
         // 1. The client id is configuration (not a secret) and must be configured before the
         //    browser flow can start. Report it clearly instead of letting interop fail.
-        var clientId = _configuration[ClientIdConfigurationKey];
+        string? clientId = _configuration[ClientIdConfigurationKey];
         if (string.IsNullOrWhiteSpace(clientId))
         {
             _logger.LogError(
@@ -103,7 +103,7 @@ public sealed class GoogleAuthenticationService : IAuthenticationService
         UserProfile profile;
         try
         {
-            var tokens = await _apiClient.PostAnonymousAsync<GoogleSignInRequest, TokenPair>(
+            TokenPair tokens = await _apiClient.PostAnonymousAsync<GoogleSignInRequest, TokenPair>(
                 GoogleSignInPath,
                 new GoogleSignInRequest(idToken),
                 cancellationToken);

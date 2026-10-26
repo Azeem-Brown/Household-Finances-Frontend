@@ -203,7 +203,7 @@ else
         {
             // The backend owns the trim and returns the updated profile, so the saved value (and
             // not the raw input) is what the page shows afterwards.
-            var updated = await ApiClient.PatchAsync<UpdateDisplayNameRequest, UserProfile>(
+            UserProfile updated = await ApiClient.PatchAsync<UpdateDisplayNameRequest, UserProfile>(
                 ProfilePath,
                 new UpdateDisplayNameRequest(_displayName!.Trim()));
 

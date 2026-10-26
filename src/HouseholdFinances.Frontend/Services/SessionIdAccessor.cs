@@ -32,7 +32,7 @@ public sealed class SessionIdAccessor : ISessionIdAccessor, IDisposable
     /// <inheritdoc />
     public void Dispose()
     {
-        var sessionId = Interlocked.Exchange(ref _sessionId, null);
+        string? sessionId = Interlocked.Exchange(ref _sessionId, null);
         if (sessionId is not null)
         {
             _registry.Remove(sessionId);

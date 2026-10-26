@@ -3,7 +3,7 @@ using HouseholdFinances.Frontend.Services;
 using Microsoft.AspNetCore.DataProtection;
 using MudBlazor.Services;
 
-var builder = WebApplication.CreateBuilder(args);
+WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
@@ -15,14 +15,14 @@ builder.Services.AddMudServices();
 // Shared API client layer. The base URL is configuration-driven so no environment is hard-coded;
 // the Blazor Server host calls the API server-to-server, so the bearer token never reaches the
 // browser and no CORS handling is required.
-var apiBaseUrl = builder.Configuration["Api:BaseUrl"];
+string? apiBaseUrl = builder.Configuration["Api:BaseUrl"];
 if (string.IsNullOrWhiteSpace(apiBaseUrl))
 {
     throw new InvalidOperationException(
         "The API base URL is required. Set the 'Api:BaseUrl' configuration value.");
 }
 
-if (!Uri.TryCreate(apiBaseUrl, UriKind.Absolute, out var apiBaseUri) ||
+if (!Uri.TryCreate(apiBaseUrl, UriKind.Absolute, out Uri? apiBaseUri) ||
     (apiBaseUri.Scheme != Uri.UriSchemeHttp && apiBaseUri.Scheme != Uri.UriSchemeHttps))
 {
     throw new InvalidOperationException(
@@ -38,7 +38,7 @@ builder.Services.AddHttpClient<IApiClient, ApiClient>(client =>
 // cookie; the token pair stays server-side, encrypted with ASP.NET Core Data Protection under a
 // key ring that must itself be persistent for a restart to honour a session. Both directories are
 // configuration-driven and default outside the repository (see README).
-var sessionOptions = PersistentSessionOptions.FromConfiguration(builder.Configuration);
+PersistentSessionOptions sessionOptions = PersistentSessionOptions.FromConfiguration(builder.Configuration);
 builder.Services.AddSingleton(sessionOptions);
 
 builder.Services.AddDataProtection()
@@ -68,12 +68,12 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<IGoogleIdentityProvider, GoogleIdentityInterop>();
 builder.Services.AddScoped<IAuthenticationService, GoogleAuthenticationService>();
 
-var app = builder.Build();
+WebApplication app = builder.Build();
 
 // Fail fast when the session locations are unusable, and sweep records no browser can still use.
 Directory.CreateDirectory(sessionOptions.Directory);
 Directory.CreateDirectory(sessionOptions.KeyRingDirectory);
-var prunedSessionRecords = await app.Services
+int prunedSessionRecords = await app.Services
     .GetRequiredService<FileSessionTokenRepository>()
     .PruneExpiredRecordsAsync();
 app.Logger.LogInformation(
