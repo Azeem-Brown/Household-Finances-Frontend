@@ -42,7 +42,7 @@
     // resolves from the existing session (setup when the user has no household yet).
     protected override async Task OnInitializedAsync()
     {
-        var destination = await AuthenticationService.TryResumeAsync();
+        AuthenticationDestination? destination = await AuthenticationService.TryResumeAsync();
 
         if (destination is null)
         {
