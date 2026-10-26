@@ -127,6 +127,47 @@ public sealed class GoogleAuthenticationService : IAuthenticationService
             : AuthenticationDestination.Dashboard);
     }
 
+    /// <inheritdoc />
+    public async Task<AuthenticationDestination?> TryResumeAsync(CancellationToken cancellationToken = default)
+    {
+        TokenPair? tokens;
+        try
+        {
+            tokens = await _tokenStore.GetAsync(cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            // This is a probe, not a sign-in: a store that cannot answer must look signed out so the
+            // page falls back to the sign-in flow rather than failing to render.
+            _logger.LogWarning(exception, "A stored session could not be read and was treated as signed out.");
+            return null;
+        }
+
+        if (tokens is null)
+        {
+            return null;
+        }
+
+        UserProfile profile;
+        try
+        {
+            profile = await _apiClient.GetAsync<UserProfile>(CurrentUserPath, cancellationToken);
+        }
+        catch (ClientErrorException exception)
+        {
+            // A stored pair the API will not accept is worse than no session: clear it so the user
+            // is shown the sign-in button instead of a page that keeps failing every request.
+            _logger.LogWarning(exception, "A stored session could not be resumed and was cleared.");
+
+            await _tokenStore.ClearAsync(cancellationToken);
+            return null;
+        }
+
+        return profile.Households.Count == 0
+            ? AuthenticationDestination.Setup
+            : AuthenticationDestination.Dashboard;
+    }
+
     /// <summary>The anonymous request body for <c>POST /api/v1/auth/google</c>.</summary>
     private sealed record GoogleSignInRequest(string IdToken);
 }
