@@ -65,6 +65,7 @@ Size and priority are planning hints. They do not affect workflow state and are 
 | `area: api` | API client and backend integration |
 | `area: auth` | Authentication and identity |
 | `area: data` | Models, state, and persistence |
+| `area: infra` | CI, configuration, and deployment |
 
 An issue may carry more than one area label. Keep the set small; add a new area only when a second issue needs it.
 
