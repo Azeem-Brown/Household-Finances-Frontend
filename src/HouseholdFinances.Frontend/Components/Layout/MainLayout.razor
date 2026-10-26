@@ -1,5 +1,8 @@
 ﻿@inherits LayoutComponentBase
+@implements IDisposable
 @inject ThemeService ThemeService
+@inject IAuthenticationService AuthenticationService
+@inject NavigationManager Navigation
 
 <MudThemeProvider Theme="@ThemeService.Theme" @bind-IsDarkMode="@ThemeService.IsDarkMode" />
 <MudPopoverProvider />
@@ -15,6 +18,14 @@
                        aria-label="Toggle navigation menu" />
         <MudText Typo="Typo.h6" Class="ml-2">Household Finances</MudText>
         <MudSpacer />
+        @if (_isSignedIn)
+        {
+            <MudIconButton Icon="@Icons.Material.Filled.Logout"
+                           Color="Color.Inherit"
+                           OnClick="SignOutAsync"
+                           aria-label="Sign out"
+                           data-testid="signout" />
+        }
         <MudIconButton Icon="@(ThemeService.IsDarkMode ? Icons.Material.Filled.LightMode : Icons.Material.Filled.DarkMode)"
                        Color="Color.Inherit"
                        OnClick="ThemeService.ToggleDarkMode"
@@ -43,6 +54,47 @@
 
 @code {
     private bool _drawerOpen = true;
+    private bool _isSignedIn;
 
     private void ToggleDrawer() => _drawerOpen = !_drawerOpen;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Navigation.LocationChanged += OnLocationChanged;
+        _isSignedIn = await AuthenticationService.HasSessionAsync();
+    }
+
+    // The layout outlives a single page, so signing in on the login page or signing out here only
+    // becomes visible on navigation. Re-checking keeps the control in step with the session.
+    private async void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        bool isSignedIn = await AuthenticationService.HasSessionAsync();
+
+        if (isSignedIn == _isSignedIn)
+        {
+            return;
+        }
+
+        _isSignedIn = isSignedIn;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task SignOutAsync()
+    {
+        try
+        {
+            await AuthenticationService.SignOutAsync();
+        }
+        catch (Exception)
+        {
+            // Reaching the login page matters more than the failure: the session check there
+            // reports the truth either way.
+        }
+
+        _isSignedIn = false;
+        Navigation.NavigateTo("/login");
+    }
+
+    /// <inheritdoc />
+    public void Dispose() => Navigation.LocationChanged -= OnLocationChanged;
 }

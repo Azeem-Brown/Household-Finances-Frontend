@@ -1,6 +1,8 @@
 using Bunit;
+using Bunit.TestDoubles;
 using HouseholdFinances.Frontend.Components.Layout;
 using HouseholdFinances.Frontend.Services;
+using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using MudBlazor;
 using MudBlazor.Services;
@@ -16,6 +18,7 @@ namespace HouseholdFinances.Frontend.Tests.Components;
 public class MainLayoutShellTests : BunitContext, IAsyncLifetime
 {
     private readonly ThemeService _themeService = new();
+    private readonly StubAuthenticationService _authenticationService = new();
 
     public MainLayoutShellTests()
     {
@@ -23,6 +26,7 @@ public class MainLayoutShellTests : BunitContext, IAsyncLifetime
         JSInterop.Mode = JSRuntimeMode.Loose;
         Services.AddMudServices();
         Services.AddSingleton(_themeService);
+        Services.AddSingleton<IAuthenticationService>(_authenticationService);
     }
 
     // Rendering the shell resolves MudBlazor services that only implement IAsyncDisposable, so the
@@ -60,5 +64,42 @@ public class MainLayoutShellTests : BunitContext, IAsyncLifetime
         {
             Assert.Contains(label, cut.Markup);
         }
+    }
+
+    [Fact]
+    public void MainLayout_HidesSignOutWhenThereIsNoSession()
+    {
+        _authenticationService.HasSession = false;
+
+        var cut = Render<MainLayout>();
+
+        Assert.Empty(cut.FindAll("[data-testid='signout']"));
+    }
+
+    [Fact]
+    public void MainLayout_ShowsSignOutWhenSignedIn()
+    {
+        _authenticationService.HasSession = true;
+
+        var cut = Render<MainLayout>();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-testid='signout']")));
+        Assert.Equal("Sign out", cut.Find("[data-testid='signout']").GetAttribute("aria-label"));
+    }
+
+    [Fact]
+    public void MainLayout_SignOut_ClearsTheSessionAndReturnsToLogin()
+    {
+        _authenticationService.HasSession = true;
+        var navigation = (BunitNavigationManager)Services.GetRequiredService<NavigationManager>();
+
+        var cut = Render<MainLayout>();
+
+        cut.WaitForAssertion(() => cut.Find("[data-testid='signout']"));
+        cut.Find("[data-testid='signout']").Click();
+
+        cut.WaitForAssertion(() => Assert.EndsWith("/login", navigation.Uri, StringComparison.Ordinal));
+        Assert.Equal(1, _authenticationService.SignOutCallCount);
+        Assert.Empty(cut.FindAll("[data-testid='signout']"));
     }
 }

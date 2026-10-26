@@ -128,6 +128,25 @@ public sealed class GoogleAuthenticationService : IAuthenticationService
     }
 
     /// <inheritdoc />
+    public async Task<bool> HasSessionAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await _tokenStore.GetAsync(cancellationToken) is not null;
+        }
+        catch (Exception exception)
+        {
+            // The shell asks this on every navigation, so a store that cannot answer must look
+            // signed out instead of failing to render the app bar.
+            _logger.LogWarning(exception, "A session could not be read and was treated as signed out.");
+            return false;
+        }
+    }
+
+    /// <inheritdoc />
+    public Task SignOutAsync(CancellationToken cancellationToken = default) =>
+        _tokenStore.ClearAsync(cancellationToken);
+        
     public async Task<AuthenticationDestination?> TryResumeAsync(CancellationToken cancellationToken = default)
     {
         TokenPair? tokens;

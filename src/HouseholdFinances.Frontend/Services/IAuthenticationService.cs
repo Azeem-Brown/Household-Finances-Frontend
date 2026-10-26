@@ -23,6 +23,25 @@ public interface IAuthenticationService
     Task<AuthenticationResult> SignInAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Reports whether a session is currently stored.
+    /// </summary>
+    /// <param name="cancellationToken">A token to cancel the check.</param>
+    /// <returns><see langword="true"/> when a token pair is stored; otherwise <see langword="false"/>.</returns>
+    /// <remarks>
+    /// This is the cheap check used by the shell to decide whether to offer sign-out, so it never
+    /// throws: a store that cannot be read is reported as signed out.
+    /// </remarks>
+    Task<bool> HasSessionAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Ends the local session by clearing the stored token pair.
+    /// </summary>
+    /// <param name="cancellationToken">A token to cancel the clear.</param>
+    /// <remarks>
+    /// The backend exposes no revocation endpoint, so this discards the stored pair rather than
+    /// invalidating it server-side; the refresh token then expires on its own.
+    /// </remarks>
+    Task SignOutAsync(CancellationToken cancellationToken = default);
     /// Reports whether a session already exists and where the signed-in user should be routed,
     /// without starting a new provider sign-in.
     /// </summary>
