@@ -68,7 +68,7 @@
     // becomes visible on navigation. Re-checking keeps the control in step with the session.
     private async void OnLocationChanged(object? sender, LocationChangedEventArgs e)
     {
-        var isSignedIn = await AuthenticationService.HasSessionAsync();
+        bool isSignedIn = await AuthenticationService.HasSessionAsync();
 
         if (isSignedIn == _isSignedIn)
         {
