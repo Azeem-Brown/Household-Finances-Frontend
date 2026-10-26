@@ -77,6 +77,42 @@ sent to the backend and the failure looks like an application bug. The browser c
 Register the exact origin the browser address bar is on (scheme and port included) under
 **Authorized JavaScript origins** for the client, as described in step 2.
 
+If signing in succeeds but the session does not survive a reload, check that the page is served over
+`https` (the session cookie is `Secure`) and that `Authentication:Session:Directory` is writable.
+
+## Session persistence
+
+A signed-in session survives a full browser reload and an app restart, and no token ever reaches
+the browser (issue #28).
+
+- **What is stored, and where.** The browser holds only an opaque, random session identifier in the
+  `hf_session` cookie. The API token pair (access and refresh token with their UTC expiries) lives
+  server-side, one encrypted file per session, under `Authentication:Session:Directory`. The default
+  is `%LOCALAPPDATA%\HouseholdFinances\Frontend\sessions`, outside the repository, and the file name
+  is a SHA-256 hash of the identifier so a directory listing does not disclose cookie values.
+- **What encrypts it.** Records are encrypted at rest with ASP.NET Core Data Protection under the
+  purpose `HouseholdFinances.Frontend.SessionTokenStore.v1`. No key is committed or configured by
+  hand: the Data Protection key ring lives in `Authentication:Session:KeyRingDirectory`, defaulting
+  to `%LOCALAPPDATA%\HouseholdFinances\Frontend\keys`. Losing the key ring signs everyone out (the
+  records become unreadable and are discarded); it never reveals tokens.
+  In production the key ring must be a persistent volume shared by every instance and protected at
+  rest by the host; an ephemeral container filesystem would sign users out on every restart.
+- **Cookie flags.** `HttpOnly`, `Secure`, `SameSite=Lax`, host-only, `Path=/`, and a bounded
+  `MaxAge` from `Authentication:Session:CookieMaxAgeDays` (default 7, maximum 90, so it should not
+  outlive the API's refresh-token lifetime). Because the cookie is `Secure`, local persistence needs
+  the `https` launch profile (`https://localhost:7073`); over plain `http` the browser stores it but
+  never sends it back.
+- **Refresh-token rotation.** The backend issues a new pair on every refresh and invalidates the
+  presented refresh token, so each sign-in and each refresh rewrites the stored record with the
+  newly returned pair. If the API rejects the stored refresh token, the record is cleared and the
+  user returns to sign-in.
+- **Fail closed.** A missing, expired, tampered, or undecryptable record is treated as signed out and
+  removed. A Blazor Server circuit cannot read or write cookies, so the cookie is issued on document
+  requests by `SessionCookieMiddleware` and the identifier reaches the circuit through
+  `SessionStateBridge` (`PersistentComponentState`). Clearing the server-side record signs the user
+  out; a cookie left behind is inert and is replaced on the next document request once no live
+  circuit still holds it.
+
 ## Branching
 
 | Branch | Purpose |

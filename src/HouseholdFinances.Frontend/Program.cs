@@ -1,5 +1,6 @@
 using HouseholdFinances.Frontend.Components;
 using HouseholdFinances.Frontend.Services;
+using Microsoft.AspNetCore.DataProtection;
 using MudBlazor.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -28,11 +29,29 @@ if (!Uri.TryCreate(apiBaseUrl, UriKind.Absolute, out var apiBaseUri) ||
         $"The 'Api:BaseUrl' configuration value must be an absolute http or https URL, but was '{apiBaseUrl}'.");
 }
 
-builder.Services.AddScoped<ITokenStore, InMemoryTokenStore>();
 builder.Services.AddHttpClient<IApiClient, ApiClient>(client =>
 {
     client.BaseAddress = apiBaseUri;
 });
+
+// Persistent session (issue #28). The browser holds only an opaque session id in an HTTP-only
+// cookie; the token pair stays server-side, encrypted with ASP.NET Core Data Protection under a
+// key ring that must itself be persistent for a restart to honour a session. Both directories are
+// configuration-driven and default outside the repository (see README).
+var sessionOptions = PersistentSessionOptions.FromConfiguration(builder.Configuration);
+builder.Services.AddSingleton(sessionOptions);
+
+builder.Services.AddDataProtection()
+    .SetApplicationName("HouseholdFinances.Frontend")
+    .PersistKeysToFileSystem(new DirectoryInfo(sessionOptions.KeyRingDirectory));
+
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddSingleton<ActiveSessionRegistry>();
+builder.Services.AddSingleton<FileSessionTokenRepository>();
+builder.Services.AddSingleton<ISessionTokenRepository>(
+    services => services.GetRequiredService<FileSessionTokenRepository>());
+builder.Services.AddScoped<ISessionIdAccessor, SessionIdAccessor>();
+builder.Services.AddScoped<ITokenStore, PersistentTokenStore>();
 
 // Frontend-only client services.
 builder.Services.AddScoped<ThemeService>();
@@ -51,6 +70,18 @@ builder.Services.AddScoped<IAuthenticationService, GoogleAuthenticationService>(
 
 var app = builder.Build();
 
+// Fail fast when the session locations are unusable, and sweep records no browser can still use.
+Directory.CreateDirectory(sessionOptions.Directory);
+Directory.CreateDirectory(sessionOptions.KeyRingDirectory);
+var prunedSessionRecords = await app.Services
+    .GetRequiredService<FileSessionTokenRepository>()
+    .PruneExpiredRecordsAsync();
+app.Logger.LogInformation(
+    "Sessions are persisted in {SessionDirectory} with Data Protection keys in {KeyRingDirectory}; {PrunedRecordCount} expired record(s) removed.",
+    sessionOptions.Directory,
+    sessionOptions.KeyRingDirectory,
+    prunedSessionRecords);
+
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())
 {
@@ -60,6 +91,11 @@ if (!app.Environment.IsDevelopment())
 }
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
 app.UseHttpsRedirection();
+
+// Issues and reads the HTTP-only session cookie on document requests (issue #28). A Blazor Server
+// circuit cannot read or write cookies, so the cookie and the circuit's session identifier are
+// bridged through this middleware and SessionStateBridge.
+app.UseMiddleware<SessionCookieMiddleware>();
 
 app.UseAntiforgery();
 
