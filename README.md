@@ -88,6 +88,10 @@ Register the exact origin the browser address bar is on (scheme and port include
 
 Feature branches are created from `DEV` and named after the issue they implement, for example `issue-6-scaffold`.
 
+Every pull request into `DEV` is gated by the `CI` GitHub Actions workflow
+(`.github/workflows/ci.yml`), which restores, builds in Release, and runs the test suite on
+`ubuntu-latest`. A broken build or failing test fails the check before review.
+
 ## Documentation
 
 - Product specification: [`Family Expense Planner.md`](./Family%20Expense%20Planner.md)
