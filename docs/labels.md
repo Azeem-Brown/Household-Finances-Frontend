@@ -37,6 +37,8 @@ stateDiagram-v2
 
 A `nightshift:running` claim older than 24 hours is treated as stale: reset the issue to `nightshift` after checking for a half-finished branch or PR.
 
+The scheduled automation that consumes this queue is described in [`nightshift.md`](./nightshift.md).
+
 ## Eligibility and blockers
 
 | Label | Meaning |

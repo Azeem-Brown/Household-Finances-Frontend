@@ -92,4 +92,5 @@ Feature branches are created from `DEV` and named after the issue they implement
 
 - Product specification: [`Family Expense Planner.md`](./Family%20Expense%20Planner.md)
 - Label conventions: [`docs/labels.md`](./docs/labels.md)
+- Nightshift automation: [`docs/nightshift.md`](./docs/nightshift.md)
 - Work items: [frontend issues](https://github.com/Azeem-Brown/Household-Finances-Frontend/issues)

@@ -1,0 +1,87 @@
+name: Nightshift
+
+# Picks one eligible issue from the nightshift queue and implements it with the Copilot CLI.
+# Setup, safety rails, and troubleshooting: docs/nightshift.md
+#
+# Requires the repository secret NIGHTSHIFT_TOKEN: a token that can push branches, open pull
+# requests, edit labels, and call Copilot. The default GITHUB_TOKEN is not sufficient.
+
+on:
+  schedule:
+    # 01:00 UTC nightly. Adjust for the timezone you want the run to start in.
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+    inputs:
+      max_issues:
+        description: "How many eligible issues to attempt in this run"
+        type: string
+        default: "1"
+      dry_run:
+        description: "Select and claim an issue, then stop before running the agent"
+        type: boolean
+        default: true
+
+concurrency:
+  group: nightshift
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+env:
+  NIGHTSHIFT_TOKEN: ${{ secrets.NIGHTSHIFT_TOKEN }}
+  GH_TOKEN: ${{ secrets.NIGHTSHIFT_TOKEN }}
+  COPILOT_GITHUB_TOKEN: ${{ secrets.NIGHTSHIFT_TOKEN }}
+  MAX_ISSUES: ${{ inputs.max_issues || '1' }}
+  DRY_RUN: ${{ inputs.dry_run || 'false' }}
+  BASE_BRANCH: DEV
+
+jobs:
+  nightshift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - name: Checkout DEV
+        uses: actions/checkout@v4
+        with:
+          ref: DEV
+          token: ${{ env.NIGHTSHIFT_TOKEN }}
+          fetch-depth: 0
+
+      - name: Preflight
+        run: |
+          set -euo pipefail
+          if [ -z "${NIGHTSHIFT_TOKEN}" ]; then
+            echo "::error::Repository secret NIGHTSHIFT_TOKEN is missing. See docs/nightshift.md."
+            exit 1
+          fi
+          gh auth status
+          git config user.name "nightshift"
+          git config user.email "nightshift@users.noreply.github.com"
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Copilot CLI
+        run: npm install --global @github/copilot@1.0.103
+
+      - name: Run nightshift
+        run: bash .github/scripts/nightshift/run.sh
+
+      - name: Upload agent logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightshift-logs
+          path: ${{ runner.temp }}/nightshift
+          retention-days: 7
+          if-no-files-found: ignore

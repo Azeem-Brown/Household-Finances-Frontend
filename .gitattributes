@@ -1,0 +1,5 @@
+# Shell and jq sources run on Linux runners, where CRLF breaks `set -euo pipefail`
+# and jq parsing. Workflows are parsed by GitHub directly, so keep them LF as well.
+*.sh text eol=lf
+*.jq text eol=lf
+*.yml text eol=lf
