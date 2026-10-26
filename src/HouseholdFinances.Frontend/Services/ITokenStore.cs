@@ -5,11 +5,12 @@ namespace HouseholdFinances.Frontend.Services;
 /// and clear it.
 /// </summary>
 /// <remarks>
-/// The default implementation keeps the pair in memory for the life of the Blazor Server circuit.
-/// Persisting it across a browser reload or an app restart is issue #28 and is a matter of
-/// registering a different implementation: the asynchronous surface exists so a store backed by
-/// durable state (for example an encrypted cookie) can be substituted without changing the API
-/// client or its callers.
+/// The default implementation is <see cref="PersistentTokenStore"/> (issue #28): it keeps the
+/// pair in encrypted server-side storage keyed by the browser's opaque session id, so a reload or
+/// an app restart resumes the session while the refresh token is valid. <see cref="InMemoryTokenStore"/>
+/// remains for tests and for hosts that deliberately keep the pair only for the life of the
+/// circuit. The store is the only persistence seam, so the API client and its callers are
+/// unaffected by which implementation is registered.
 /// </remarks>
 public interface ITokenStore
 {

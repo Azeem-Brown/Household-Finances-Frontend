@@ -13,9 +13,9 @@ namespace HouseholdFinances.Frontend.Services;
 /// performed server to server, so the API-issued tokens never reach the browser. Every failure -
 /// a missing client id, a canceled or unavailable Google prompt, or an API error - is reported as
 /// an <see cref="AuthenticationResult.Failure"/> using the shared client error convention, so the
-/// Login page never has to handle a raw exception. Session persistence across a browser reload is
-/// issue #28 and is deliberately not handled here: this class only writes through the configured
-/// <see cref="ITokenStore"/>.
+/// Login page never has to handle a raw exception. This class only writes through the configured
+/// <see cref="ITokenStore"/>: session persistence across a browser reload or an app restart is
+/// handled there (issue #28), so signing in carries no persistence logic of its own.
 /// </remarks>
 public sealed class GoogleAuthenticationService : IAuthenticationService
 {

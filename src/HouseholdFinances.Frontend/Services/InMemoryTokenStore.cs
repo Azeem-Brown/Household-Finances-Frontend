@@ -5,8 +5,9 @@ namespace HouseholdFinances.Frontend.Services;
 /// </summary>
 /// <remarks>
 /// The pair lives only for the life of the Blazor Server circuit and is lost on a full browser
-/// reload or an app restart. Persisting the session is issue #28, which swaps this implementation
-/// for a durable one rather than changing the API client.
+/// reload or an app restart. The application registers <see cref="PersistentTokenStore"/> instead
+/// (issue #28); this implementation stays as a lightweight double for tests and as a reference for
+/// the store contract.
 /// </remarks>
 public sealed class InMemoryTokenStore : ITokenStore
 {
