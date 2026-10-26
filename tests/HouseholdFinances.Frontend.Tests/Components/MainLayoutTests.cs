@@ -27,6 +27,7 @@ public class MainLayoutTests : BunitContext, IAsyncLifetime
         JSInterop.Mode = JSRuntimeMode.Loose;
         Services.AddMudServices();
         Services.AddScoped<ThemeService>();
+        Services.AddSingleton<IAuthenticationService>(new StubAuthenticationService());
     }
 
     // The dialog and snackbar providers resolve services that only implement IAsyncDisposable, so

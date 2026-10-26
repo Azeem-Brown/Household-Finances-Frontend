@@ -18,6 +18,24 @@ internal sealed class StubAuthenticationService : IAuthenticationService
     /// <summary>Gets the number of times <see cref="SignInAsync"/> was called.</summary>
     public int CallCount { get; private set; }
 
+    /// <summary>Gets or sets whether a session is reported as stored.</summary>
+    public bool HasSession { get; set; }
+
+    /// <summary>Gets the number of times <see cref="SignOutAsync"/> was called.</summary>
+    public int SignOutCallCount { get; private set; }
+
+    /// <inheritdoc />
+    public Task<bool> HasSessionAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(HasSession);
+
+    /// <inheritdoc />
+    public Task SignOutAsync(CancellationToken cancellationToken = default)
+    {
+        SignOutCallCount++;
+        HasSession = false;
+        return Task.CompletedTask;
+    }
+
     /// <inheritdoc />
     public Task<AuthenticationResult> SignInAsync(CancellationToken cancellationToken = default)
     {
