@@ -64,8 +64,11 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
             Assert.Equal("$3,765.50", cut.Find("[data-testid='dashboard-balance']").TextContent.Trim());
         });
 
-        // The dashboard loads the Monthly totals from the households endpoint.
-        Assert.Equal(Dashboard.HouseholdsPathFor(Interval.Monthly), Assert.Single(_apiClient.Gets));
+        // The dashboard loads the Monthly totals from the households endpoint, then the household's
+        // unwindowed goals.
+        Assert.Equal(Dashboard.HouseholdsPathFor(Interval.Monthly), _apiClient.Gets[0]);
+        Assert.Equal(2, _apiClient.Gets.Count);
+        Assert.EndsWith("/goals", _apiClient.Gets[1]);
     }
 
     [Fact]
@@ -347,12 +350,14 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
         cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='dashboard-allocation-result']")));
 
         // The split is session-only page state: accepting it makes no API write, and the only
-        // request the page ever makes is the initial Monthly household load.
+        // requests the page makes are the initial Monthly household load and its goals.
         Assert.Empty(_apiClient.Posts);
         Assert.Empty(_apiClient.Puts);
         Assert.Empty(_apiClient.Patches);
         Assert.Empty(_apiClient.Deletes);
-        Assert.Equal(Dashboard.HouseholdsPathFor(Interval.Monthly), Assert.Single(_apiClient.Gets));
+        Assert.Equal(Dashboard.HouseholdsPathFor(Interval.Monthly), _apiClient.Gets[0]);
+        Assert.Equal(2, _apiClient.Gets.Count);
+        Assert.EndsWith("/goals", _apiClient.Gets[1]);
     }
 
     [Fact]
@@ -372,7 +377,9 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
         Assert.Contains(
             nameof(Interval.Monthly),
             cut.FindComponent<MudSelect<Interval>>().Markup);
-        Assert.Equal(Dashboard.HouseholdsPathFor(Interval.Monthly), Assert.Single(_apiClient.Gets));
+        Assert.Equal(Dashboard.HouseholdsPathFor(Interval.Monthly), _apiClient.Gets[0]);
+        Assert.Equal(2, _apiClient.Gets.Count);
+        Assert.EndsWith("/goals", _apiClient.Gets[1]);
     }
 
     [Fact]
@@ -435,9 +442,13 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
 
         cut.WaitForAssertion(() =>
         {
-            // Exactly one GET for the selected period, and it is the most recent request.
+            // Exactly one GET for the selected period, and it is the most recent period-qualified
+            // household request. Goal paths start with the same prefix but carry no period query.
             Assert.Single(_apiClient.Gets, path => path == expectedPath);
-            Assert.Equal(expectedPath, _apiClient.Gets[^1]);
+            Assert.Equal(
+                expectedPath,
+                _apiClient.Gets.Last(
+                    path => path.StartsWith($"{Dashboard.HouseholdsPath}?", StringComparison.Ordinal)));
 
             // The figures are the stubbed API values formatted by MoneyFormatter; the page does no
             // local recurrence expansion or re-summing.
@@ -452,8 +463,9 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
                 cut.Find("[data-testid='dashboard-balance']").TextContent.Trim());
         });
 
-        // Monthly is already selected on first load, so it needs no second request.
-        Assert.Equal(period == Interval.Monthly ? 1 : 2, _apiClient.Gets.Count);
+        // Monthly is already selected on first load, so it needs no second household request. Goals
+        // are fetched once per household, not per period.
+        Assert.Equal(period == Interval.Monthly ? 2 : 3, _apiClient.Gets.Count);
 
         // Changing the period never writes.
         Assert.Empty(_apiClient.Posts);
@@ -551,6 +563,163 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
         Assert.Empty(cut.FindAll("[data-testid='dashboard-allocation-result']"));
     }
 
+    [Fact]
+    public void Dashboard_Goal_RendersTargetCurrentTotalAndShortfall()
+    {
+        ArrangeHouseholdWithGoal(target: 10000, total: 2500);
+
+        var cut = Render<Dashboard>();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal("$10,000.00", cut.Find("[data-testid='dashboard-goal-target']").TextContent.Trim());
+            Assert.Equal("$2,500.00", cut.Find("[data-testid='dashboard-goal-total']").TextContent.Trim());
+            Assert.Equal("$7,500.00", cut.Find("[data-testid='dashboard-goal-shortfall']").TextContent.Trim());
+        });
+
+        // Without an accepted savings allocation the page explains why no time is shown rather
+        // than dividing by zero.
+        Assert.Contains(
+            Dashboard.NoContributionMessage,
+            cut.Find("[data-testid='dashboard-goal-message']").TextContent);
+        Assert.Empty(cut.FindAll("[data-testid='dashboard-goal-time']"));
+    }
+
+    [Fact]
+    public void Dashboard_Goal_CurrentPositionInputUpdatesTheShortfall()
+    {
+        ArrangeHouseholdWithGoal(target: 10000, total: 2500);
+
+        var cut = Render<Dashboard>();
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='dashboard-goal']")));
+
+        // The initial shortfall uses the stored current total (2500); editing the current position
+        // recomputes it without any API write. Immediate binding listens to oninput, not onchange.
+        cut.Find("[data-testid='dashboard-goal-position']").Input("4000");
+
+        cut.WaitForAssertion(() => Assert.Equal(
+            "$6,000.00",
+            cut.Find("[data-testid='dashboard-goal-shortfall']").TextContent.Trim()));
+    }
+
+    [Fact]
+    public void Dashboard_Goal_PositiveSavingsAllocationShowsTimeToGoal()
+    {
+        ArrangeHouseholdWithGoal(target: 10000, total: 0);
+
+        var cut = Render<Dashboard>();
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='dashboard-allocation']")));
+
+        cut.Find("[data-testid='dashboard-allocation-savings']").Change("1000");
+        cut.Find("[data-testid='dashboard-allocation-submit']").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(
+            "10 months",
+            cut.Find("[data-testid='dashboard-goal-time']").TextContent.Trim()));
+
+        Assert.Empty(cut.FindAll("[data-testid='dashboard-goal-message']"));
+    }
+
+    [Fact]
+    public void Dashboard_Goal_ZeroSavingsAllocationShowsMessageInsteadOfDividing()
+    {
+        ArrangeHouseholdWithGoal(target: 10000, total: 0);
+
+        var cut = Render<Dashboard>();
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='dashboard-allocation']")));
+
+        // Accepting a zero split is valid; the projection must explain that no contribution is
+        // available rather than dividing by zero.
+        cut.Find("[data-testid='dashboard-allocation-submit']").Click();
+
+        cut.WaitForAssertion(() => Assert.Contains(
+            Dashboard.NoContributionMessage,
+            cut.Find("[data-testid='dashboard-goal-message']").TextContent));
+        Assert.Empty(cut.FindAll("[data-testid='dashboard-goal-time']"));
+    }
+
+    [Fact]
+    public void Dashboard_Goal_AlreadyReached_ShowsMessageAndNoTime()
+    {
+        ArrangeHouseholdWithGoal(target: 1000, total: 1200);
+
+        var cut = Render<Dashboard>();
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='dashboard-allocation']")));
+
+        // A positive contribution must not produce a time to goal once the goal is reached.
+        cut.Find("[data-testid='dashboard-allocation-savings']").Change("500");
+        cut.Find("[data-testid='dashboard-allocation-submit']").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal("-$200.00", cut.Find("[data-testid='dashboard-goal-shortfall']").TextContent.Trim());
+            Assert.Contains(
+                "This goal has already been reached by $200.00.",
+                cut.Find("[data-testid='dashboard-goal-message']").TextContent);
+        });
+        Assert.Empty(cut.FindAll("[data-testid='dashboard-goal-time']"));
+    }
+
+    [Fact]
+    public void Dashboard_Goal_NoGoals_RendersNoGoalSection()
+    {
+        _apiClient.GetResponse = new List<Household>
+        {
+            HouseholdWithTotals("Family", 5000, 3000)
+        };
+
+        var cut = Render<Dashboard>();
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='dashboard-balance']")));
+
+        // No goal exists, so the page does not invent a goal card or empty-state copy.
+        Assert.Empty(cut.FindAll("[data-testid='dashboard-goal']"));
+    }
+
+    [Fact]
+    public void Dashboard_Goal_LoadFailure_ShowsConventionMessageAndKeepsTheSummary()
+    {
+        Household household = HouseholdWithTotals("Family", 5000, 3000);
+        _apiClient.GetResponsesByPath[Dashboard.HouseholdsPathFor(Interval.Monthly)] =
+            new List<Household> { household };
+        _apiClient.ThrowByPath[Dashboard.GoalsPathFor(household.Id)] =
+            new ClientErrorException(ClientErrorCode.NotFound, 42);
+
+        var cut = Render<Dashboard>();
+
+        cut.WaitForAssertion(() => Assert.Equal(
+            "NotFound 42",
+            cut.Find("[data-testid='dashboard-goal-error']").TextContent.Trim()));
+
+        // A goal failure is isolated: the summary and allocation still render, and the page error
+        // is not used for the goal request.
+        Assert.Equal("$5,000.00", cut.Find("[data-testid='dashboard-income']").TextContent.Trim());
+        Assert.Single(cut.FindAll("[data-testid='dashboard-allocation']"));
+        Assert.Empty(cut.FindAll("[data-testid='dashboard-error']"));
+    }
+
+    [Fact]
+    public void Dashboard_Goal_MultipleGoals_ShowsTheFirstByName()
+    {
+        Household household = ArrangeHouseholdWithGoal(target: 1000, total: 0);
+        _apiClient.GoalsResponse = new List<Goal>
+        {
+            GoalFor(household.Id, "Zeta", value: 1000, total: 0),
+            GoalFor(household.Id, "Alpha", value: 2000, total: 0)
+        };
+
+        var cut = Render<Dashboard>();
+
+        cut.WaitForAssertion(() => Assert.Equal(
+            "Alpha",
+            cut.Find("[data-testid='dashboard-goal-name']").TextContent.Trim()));
+        Assert.Equal("$2,000.00", cut.Find("[data-testid='dashboard-goal-target']").TextContent.Trim());
+    }
+
     /// <summary>
     /// Selects a period through the dashboard control, exactly as a user would.
     /// </summary>
@@ -596,10 +765,11 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
         double incomes,
         double payments,
         int incomeEntryCount = 1,
-        int billEntryCount = 1) =>
+        int billEntryCount = 1,
+        Guid? id = null) =>
         new()
         {
-            Id = Guid.NewGuid(),
+            Id = id ?? Guid.NewGuid(),
             Name = name,
             Incomes = incomes,
             Payments = payments,
@@ -607,8 +777,42 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
             BillEntryCount = billEntryCount
         };
 
+    // The dashboard loads the goal section after the household, so the household response is
+    // registered by path and the goal list is supplied through the stub's goal fallback.
+    private Household ArrangeHouseholdWithGoal(
+        double target,
+        double total,
+        string name = "Holiday")
+    {
+        Household household = HouseholdWithTotals("Family", 5000, 3000);
+        _apiClient.GetResponsesByPath[Dashboard.HouseholdsPathFor(Interval.Monthly)] =
+            new List<Household> { household };
+        _apiClient.GoalsResponse = new List<Goal> { GoalFor(household.Id, name, target, total) };
+
+        return household;
+    }
+
+    private static Goal GoalFor(Guid householdId, string name, double value, double total) =>
+        new()
+        {
+            Id = Guid.NewGuid(),
+            Name = name,
+            Value = value,
+            Total = total,
+            StartDate = new DateTime(2026, 1, 1),
+            EndDate = new DateTime(2026, 12, 31),
+            Recurring = false,
+            Interval = null,
+            HouseholdId = householdId,
+            UserId = Guid.NewGuid()
+        };
+
     private void ArrangeHouseholdsForEveryPeriod()
     {
+        // The same household is returned for every period (only its window totals differ), so the
+        // dashboard's once-per-household goal load is not triggered again by a period change.
+        Guid householdId = Guid.NewGuid();
+
         foreach (Interval period in Dashboard.Intervals)
         {
             (double incomes, double payments) = FiguresFor(period);
@@ -616,7 +820,7 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
             _apiClient.GetResponsesByPath[Dashboard.HouseholdsPathFor(period)] =
                 new List<Household>
                 {
-                    HouseholdWithTotals($"Family {period}", incomes, payments)
+                    HouseholdWithTotals($"Family {period}", incomes, payments, id: householdId)
                 };
         }
     }
