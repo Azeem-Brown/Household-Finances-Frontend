@@ -88,7 +88,9 @@ public class PeriodSelectionTests : BunitContext, IAsyncLifetime
             Id = Guid.NewGuid(),
             Name = "Family",
             Incomes = 400.00,
-            Payments = 100.00
+            Payments = 100.00,
+            IncomeEntryCount = 1,
+            BillEntryCount = 1
         };
 
         _apiClient.GetResponsesByPath[DashboardPage.HouseholdsPathFor(Interval.Monthly)] =
