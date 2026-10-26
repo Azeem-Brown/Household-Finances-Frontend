@@ -129,4 +129,42 @@ public class LoginPageTests : BunitContext
             Assert.EndsWith("/dashboard", _navigation.Uri, StringComparison.Ordinal));
         Assert.Empty(cut.FindAll("[data-testid='login-error']"));
     }
+
+    [Fact]
+    public void Login_WithExistingSessionWithHousehold_NavigatesToDashboardWithoutSigningIn()
+    {
+        _authenticationService.ResumeDestination = AuthenticationDestination.Dashboard;
+
+        var cut = Render<Login>();
+
+        cut.WaitForAssertion(() =>
+            Assert.EndsWith("/dashboard", _navigation.Uri, StringComparison.Ordinal));
+        Assert.Equal(1, _authenticationService.ResumeCallCount);
+        Assert.Equal(0, _authenticationService.CallCount);
+    }
+
+    [Fact]
+    public void Login_WithExistingSessionWithoutHousehold_NavigatesToSetupWithoutSigningIn()
+    {
+        _authenticationService.ResumeDestination = AuthenticationDestination.Setup;
+
+        var cut = Render<Login>();
+
+        cut.WaitForAssertion(() =>
+            Assert.EndsWith("/setup", _navigation.Uri, StringComparison.Ordinal));
+        Assert.Equal(1, _authenticationService.ResumeCallCount);
+        Assert.Equal(0, _authenticationService.CallCount);
+    }
+
+    [Fact]
+    public void Login_WithoutSession_RendersTheSignInFlowAndDoesNotNavigate()
+    {
+        _authenticationService.ResumeDestination = null;
+
+        var cut = Render<Login>();
+
+        cut.WaitForAssertion(() => Assert.Equal(1, _authenticationService.CallCount));
+        Assert.Equal(1, _authenticationService.ResumeCallCount);
+        Assert.Equal("http://localhost/", _navigation.Uri);
+    }
 }

@@ -35,6 +35,22 @@ internal sealed class StubAuthenticationService : IAuthenticationService
         HasSession = false;
         return Task.CompletedTask;
     }
+    /// <summary>
+    /// Gets or sets the destination returned for an existing session, or <see langword="null"/> to
+    /// report that no session exists.
+    /// </summary>
+    public AuthenticationDestination? ResumeDestination { get; set; }
+
+    /// <summary>Gets the number of times <see cref="TryResumeAsync"/> was called.</summary>
+    public int ResumeCallCount { get; private set; }
+
+    /// <inheritdoc />
+    public Task<AuthenticationDestination?> TryResumeAsync(CancellationToken cancellationToken = default)
+    {
+        ResumeCallCount++;
+
+        return Task.FromResult(ResumeDestination);
+    }
 
     /// <inheritdoc />
     public Task<AuthenticationResult> SignInAsync(CancellationToken cancellationToken = default)

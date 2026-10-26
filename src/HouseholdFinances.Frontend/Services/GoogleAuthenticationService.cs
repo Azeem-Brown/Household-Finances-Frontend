@@ -13,9 +13,9 @@ namespace HouseholdFinances.Frontend.Services;
 /// performed server to server, so the API-issued tokens never reach the browser. Every failure -
 /// a missing client id, a canceled or unavailable Google prompt, or an API error - is reported as
 /// an <see cref="AuthenticationResult.Failure"/> using the shared client error convention, so the
-/// Login page never has to handle a raw exception. Session persistence across a browser reload is
-/// issue #28 and is deliberately not handled here: this class only writes through the configured
-/// <see cref="ITokenStore"/>.
+/// Login page never has to handle a raw exception. This class only writes through the configured
+/// <see cref="ITokenStore"/>: session persistence across a browser reload or an app restart is
+/// handled there (issue #28), so signing in carries no persistence logic of its own.
 /// </remarks>
 public sealed class GoogleAuthenticationService : IAuthenticationService
 {
@@ -146,6 +146,46 @@ public sealed class GoogleAuthenticationService : IAuthenticationService
     /// <inheritdoc />
     public Task SignOutAsync(CancellationToken cancellationToken = default) =>
         _tokenStore.ClearAsync(cancellationToken);
+        
+    public async Task<AuthenticationDestination?> TryResumeAsync(CancellationToken cancellationToken = default)
+    {
+        TokenPair? tokens;
+        try
+        {
+            tokens = await _tokenStore.GetAsync(cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            // This is a probe, not a sign-in: a store that cannot answer must look signed out so the
+            // page falls back to the sign-in flow rather than failing to render.
+            _logger.LogWarning(exception, "A stored session could not be read and was treated as signed out.");
+            return null;
+        }
+
+        if (tokens is null)
+        {
+            return null;
+        }
+
+        UserProfile profile;
+        try
+        {
+            profile = await _apiClient.GetAsync<UserProfile>(CurrentUserPath, cancellationToken);
+        }
+        catch (ClientErrorException exception)
+        {
+            // A stored pair the API will not accept is worse than no session: clear it so the user
+            // is shown the sign-in button instead of a page that keeps failing every request.
+            _logger.LogWarning(exception, "A stored session could not be resumed and was cleared.");
+
+            await _tokenStore.ClearAsync(cancellationToken);
+            return null;
+        }
+
+        return profile.Households.Count == 0
+            ? AuthenticationDestination.Setup
+            : AuthenticationDestination.Dashboard;
+    }
 
     /// <summary>The anonymous request body for <c>POST /api/v1/auth/google</c>.</summary>
     private sealed record GoogleSignInRequest(string IdToken);
