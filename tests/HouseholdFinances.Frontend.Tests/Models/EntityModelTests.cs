@@ -31,7 +31,7 @@ public class EntityModelTests
     }
 
     [Fact]
-    public void Household_CanBeConstructedWithMoneyTotals()
+    public void Household_CanBeConstructedWithMoneyTotalsAndEntryCounts()
     {
         var id = Guid.NewGuid();
 
@@ -40,13 +40,17 @@ public class EntityModelTests
             Id = id,
             Name = "Brown Household",
             Incomes = 4200.50,
-            Payments = 2875.25
+            Payments = 2875.25,
+            IncomeEntryCount = 3,
+            BillEntryCount = 4
         };
 
         Assert.Equal(id, household.Id);
         Assert.Equal("Brown Household", household.Name);
         Assert.Equal(4200.50, household.Incomes);
         Assert.Equal(2875.25, household.Payments);
+        Assert.Equal(3, household.IncomeEntryCount);
+        Assert.Equal(4, household.BillEntryCount);
     }
 
     [Fact]

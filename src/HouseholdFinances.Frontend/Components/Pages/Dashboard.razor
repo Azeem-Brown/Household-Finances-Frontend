@@ -207,10 +207,15 @@ else
     private string? _allocationErrorMessage;
     private (double Savings, double FunMoney)? _allocation;
 
-    // The empty state is shown when there is neither income nor bill data, so a new user is guided
-    // to add entries instead of being shown a bare zero.
+    // The empty state is shown only when the household has no stored income or bill entries at all,
+    // so a new user is guided to add entries instead of being shown a bare zero. The entry counts
+    // are window-independent, so a household with entries but no occurrences in the selected period
+    // falls through to the summary and shows $0.00 instead of the guidance card. The counts come
+    // from the household response; the page never fetches entries to find out.
     private bool IsEmpty =>
-        _household is not null && _household.Incomes == 0 && _household.Payments == 0;
+        _household is not null &&
+        _household.IncomeEntryCount == 0 &&
+        _household.BillEntryCount == 0;
 
     private string HouseholdName => _household?.Name ?? string.Empty;
 

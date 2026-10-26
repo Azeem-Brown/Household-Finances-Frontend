@@ -12,7 +12,8 @@ namespace HouseholdFinances.Frontend.Tests.Components;
 /// bUnit component tests for the Household Dashboard: the populated summary renders the income,
 /// expense, and remaining-balance values for the selected calendar period; the period control
 /// offers the six intervals and defaults to Monthly; the empty state renders guidance instead of a
-/// bare zero; and load failures surface through the shared client error convention.
+/// bare zero only when the household has no entries at all; and load failures surface through the
+/// shared client error convention.
 /// </summary>
 /// <remarks>
 /// The API client is replaced with a test double, so no live backend or browser is involved. The
@@ -51,7 +52,7 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
     {
         _apiClient.GetResponse = new List<Household>
         {
-            new() { Id = Guid.NewGuid(), Name = "Family", Incomes = 5000, Payments = 1234.5 }
+            HouseholdWithTotals("Family", 5000, 1234.5)
         };
 
         var cut = Render<Dashboard>();
@@ -72,7 +73,7 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
     {
         _apiClient.GetResponse = new List<Household>
         {
-            new() { Id = Guid.NewGuid(), Name = "Family", Incomes = 5000, Payments = 1000 }
+            HouseholdWithTotals("Family", 5000, 1000)
         };
 
         var cut = Render<Dashboard>();
@@ -85,7 +86,7 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
     {
         _apiClient.GetResponse = new List<Household>
         {
-            new() { Id = Guid.NewGuid(), Name = "Family", Incomes = 100, Payments = 150 }
+            HouseholdWithTotals("Family", 100, 150)
         };
 
         var cut = Render<Dashboard>();
@@ -97,8 +98,8 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
     [Fact]
     public void Dashboard_MultipleHouseholds_SummarisesTheFirstOnePredictably()
     {
-        var first = new Household { Id = Guid.NewGuid(), Name = "Alpha", Incomes = 3000, Payments = 1000 };
-        var second = new Household { Id = Guid.NewGuid(), Name = "Beta", Incomes = 9000, Payments = 5000 };
+        var first = HouseholdWithTotals("Alpha", 3000, 1000);
+        var second = HouseholdWithTotals("Beta", 9000, 5000);
         _apiClient.GetResponse = new List<Household> { first, second };
 
         var cut = Render<Dashboard>();
@@ -112,11 +113,21 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
     }
 
     [Fact]
-    public void Dashboard_NoIncomeOrBills_RendersGuidanceInsteadOfZeros()
+    public void Dashboard_NoEntries_RendersGuidanceInsteadOfZeros()
     {
+        // No stored entries at all: both window-independent counts are zero, so this is the only
+        // case that shows the onboarding guidance.
         _apiClient.GetResponse = new List<Household>
         {
-            new() { Id = Guid.NewGuid(), Name = "Family", Incomes = 0, Payments = 0 }
+            new()
+            {
+                Id = Guid.NewGuid(),
+                Name = "Family",
+                Incomes = 0,
+                Payments = 0,
+                IncomeEntryCount = 0,
+                BillEntryCount = 0
+            }
         };
 
         var cut = Render<Dashboard>();
@@ -134,6 +145,47 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
         Assert.Empty(cut.FindAll("[data-testid='dashboard-balance']"));
         Assert.NotEmpty(cut.FindAll("[data-testid='dashboard-period']"));
         Assert.Single(cut.FindComponents<MudSelect<Interval>>());
+    }
+
+    [Theory]
+    [InlineData(1, 0)]
+    [InlineData(0, 1)]
+    [InlineData(2, 3)]
+    public void Dashboard_EntriesOutsideTheSelectedPeriod_RendersZerosInsteadOfGuidance(
+        int incomeEntryCount,
+        int billEntryCount)
+    {
+        // The household has stored entries, but none of them fall in the selected window, so the
+        // API returns zero window totals while the entry counts stay non-zero.
+        _apiClient.GetResponse = new List<Household>
+        {
+            new()
+            {
+                Id = Guid.NewGuid(),
+                Name = "Family",
+                Incomes = 0,
+                Payments = 0,
+                IncomeEntryCount = incomeEntryCount,
+                BillEntryCount = billEntryCount
+            }
+        };
+
+        var cut = Render<Dashboard>();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal("$0.00", cut.Find("[data-testid='dashboard-income']").TextContent.Trim());
+            Assert.Equal("$0.00", cut.Find("[data-testid='dashboard-expenses']").TextContent.Trim());
+            Assert.Equal("$0.00", cut.Find("[data-testid='dashboard-balance']").TextContent.Trim());
+        });
+
+        // The guidance card belongs to a household with no entries, not to an empty window.
+        Assert.Empty(cut.FindAll("[data-testid='dashboard-empty']"));
+        Assert.DoesNotContain(Dashboard.EmptyStateMessage, cut.Markup);
+
+        // The period control and the split panel stay as they were for a populated household.
+        Assert.NotEmpty(cut.FindAll("[data-testid='dashboard-period']"));
+        Assert.Single(cut.FindAll("[data-testid='dashboard-allocation']"));
     }
 
     [Fact]
@@ -189,7 +241,7 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
     {
         _apiClient.GetResponse = new List<Household>
         {
-            new() { Id = Guid.NewGuid(), Name = "Family", Incomes = 5000, Payments = 3000 }
+            HouseholdWithTotals("Family", 5000, 3000)
         };
 
         var cut = Render<Dashboard>();
@@ -214,7 +266,7 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
     {
         _apiClient.GetResponse = new List<Household>
         {
-            new() { Id = Guid.NewGuid(), Name = "Family", Incomes = 2000, Payments = 500 }
+            HouseholdWithTotals("Family", 2000, 500)
         };
 
         var cut = Render<Dashboard>();
@@ -235,7 +287,7 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
     {
         _apiClient.GetResponse = new List<Household>
         {
-            new() { Id = Guid.NewGuid(), Name = "Family", Incomes = 5000, Payments = 3000 }
+            HouseholdWithTotals("Family", 5000, 3000)
         };
 
         var cut = Render<Dashboard>();
@@ -261,7 +313,7 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
     {
         _apiClient.GetResponse = new List<Household>
         {
-            new() { Id = Guid.NewGuid(), Name = "Family", Incomes = 5000, Payments = 3000 }
+            HouseholdWithTotals("Family", 5000, 3000)
         };
 
         var cut = Render<Dashboard>();
@@ -281,7 +333,7 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
     {
         _apiClient.GetResponse = new List<Household>
         {
-            new() { Id = Guid.NewGuid(), Name = "Family", Incomes = 5000, Payments = 3000 }
+            HouseholdWithTotals("Family", 5000, 3000)
         };
 
         var cut = Render<Dashboard>();
@@ -537,6 +589,24 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
         _ => throw new ArgumentOutOfRangeException(nameof(period))
     };
 
+    // The API returns the window totals alongside the window-independent entry counts, so a
+    // fixture with non-zero totals always carries non-zero counts.
+    private static Household HouseholdWithTotals(
+        string name,
+        double incomes,
+        double payments,
+        int incomeEntryCount = 1,
+        int billEntryCount = 1) =>
+        new()
+        {
+            Id = Guid.NewGuid(),
+            Name = name,
+            Incomes = incomes,
+            Payments = payments,
+            IncomeEntryCount = incomeEntryCount,
+            BillEntryCount = billEntryCount
+        };
+
     private void ArrangeHouseholdsForEveryPeriod()
     {
         foreach (Interval period in Dashboard.Intervals)
@@ -546,13 +616,7 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
             _apiClient.GetResponsesByPath[Dashboard.HouseholdsPathFor(period)] =
                 new List<Household>
                 {
-                    new()
-                    {
-                        Id = Guid.NewGuid(),
-                        Name = $"Family {period}",
-                        Incomes = incomes,
-                        Payments = payments
-                    }
+                    HouseholdWithTotals($"Family {period}", incomes, payments)
                 };
         }
     }

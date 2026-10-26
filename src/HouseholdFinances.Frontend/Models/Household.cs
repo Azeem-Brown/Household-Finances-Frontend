@@ -19,4 +19,16 @@ public class Household
     /// Non-authoritative total, derived from the household members' bill entries.
     /// </summary>
     public double Payments { get; set; }
+
+    /// <summary>
+    /// The number of stored income entries for the household, independent of the requested period.
+    /// The Dashboard uses it to tell "no entries at all" apart from "no occurrences in this window".
+    /// </summary>
+    public int IncomeEntryCount { get; set; }
+
+    /// <summary>
+    /// The number of stored bill entries for the household, independent of the requested period.
+    /// The Dashboard uses it to tell "no entries at all" apart from "no occurrences in this window".
+    /// </summary>
+    public int BillEntryCount { get; set; }
 }
