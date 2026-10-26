@@ -1,3 +1,4 @@
+using HouseholdFinances.Frontend.Models;
 using HouseholdFinances.Frontend.Services;
 
 namespace HouseholdFinances.Frontend.Tests.Components;
@@ -37,6 +38,13 @@ internal sealed class StubApiClient : IApiClient
     /// household's income). A path registered here takes precedence over <see cref="GetResponse"/>.
     /// </summary>
     public Dictionary<string, object?> GetResponsesByPath { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Gets or sets the response returned for a GET whose path ends in <c>/goals</c> when the path
+    /// is not registered in <see cref="GetResponsesByPath"/>. It defaults to no goals so tests that
+    /// only care about the household summary do not have to register the dashboard's second call.
+    /// </summary>
+    public object? GoalsResponse { get; set; } = new List<Goal>();
 
     /// <summary>
     /// Gets or sets an exception to throw instead of returning a response from
@@ -119,7 +127,11 @@ internal sealed class StubApiClient : IApiClient
             return Task.FromException<TResponse>(Throw);
         }
 
-        var response = GetResponsesByPath.TryGetValue(path, out var mapped) ? mapped : GetResponse;
+        var response = GetResponsesByPath.TryGetValue(path, out var mapped)
+            ? mapped
+            : path.EndsWith("/goals", StringComparison.Ordinal)
+                ? GoalsResponse
+                : GetResponse;
 
         return Task.FromResult((TResponse)response!);
     }
