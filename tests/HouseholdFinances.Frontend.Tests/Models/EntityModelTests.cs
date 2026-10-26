@@ -117,6 +117,57 @@ public class EntityModelTests
     }
 
     [Fact]
+    public void Income_DeserializesNullIntervalAsNull()
+    {
+        const string json = """
+            {
+              "id": "0f6d5c4b-3a29-4e18-9c7d-6b5a4f3e2d1c",
+              "name": "Bonus",
+              "value": 500,
+              "startDate": "2026-03-01T00:00:00Z",
+              "endDate": "2026-03-01T00:00:00Z",
+              "recurring": false,
+              "interval": null,
+              "userId": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e"
+            }
+            """;
+
+        var income = JsonSerializer.Deserialize<Income>(
+            json,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        Assert.NotNull(income);
+        Assert.False(income!.Recurring);
+        Assert.Null(income.Interval);
+    }
+
+    [Fact]
+    public void Bill_DeserializesNullIntervalAsNull()
+    {
+        const string json = """
+            {
+              "id": "5d4c3b2a-1f0e-4d9c-8b7a-6f5e4d3c2b1a",
+              "name": "Roof repair",
+              "value": 900,
+              "startDate": "2026-04-15T00:00:00Z",
+              "endDate": "2026-04-15T00:00:00Z",
+              "recurring": false,
+              "interval": null,
+              "householdId": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+              "userId": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e"
+            }
+            """;
+
+        var bill = JsonSerializer.Deserialize<Bill>(
+            json,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        Assert.NotNull(bill);
+        Assert.False(bill!.Recurring);
+        Assert.Null(bill.Interval);
+    }
+
+    [Fact]
     public void Item_DescriptionMayBeNull()
     {
         var id = Guid.NewGuid();
