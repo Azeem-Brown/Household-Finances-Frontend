@@ -21,4 +21,16 @@ public interface IAuthenticationService
     /// <param name="cancellationToken">A token to cancel the sign-in attempt.</param>
     /// <returns>The sign-in outcome.</returns>
     Task<AuthenticationResult> SignInAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Reports whether a session already exists and where the signed-in user should be routed,
+    /// without starting a new provider sign-in.
+    /// </summary>
+    /// <param name="cancellationToken">A token to cancel the check.</param>
+    /// <returns>
+    /// The destination for the existing session, or <see langword="null"/> when there is no usable
+    /// session. A stored pair the API rejects is cleared. This method never throws: a session that
+    /// cannot be read is treated as signed out so the page can show the sign-in flow.
+    /// </returns>
+    Task<AuthenticationDestination?> TryResumeAsync(CancellationToken cancellationToken = default);
 }

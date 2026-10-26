@@ -37,6 +37,24 @@
     private bool _signInStarted;
     private string? _errorMessage;
 
+    // A circuit that is already signed in must not be shown the sign-in button again. The check
+    // runs before the Google interop flow starts, and routes to the destination the service
+    // resolves from the existing session (setup when the user has no household yet).
+    protected override async Task OnInitializedAsync()
+    {
+        var destination = await AuthenticationService.TryResumeAsync();
+
+        if (destination is null)
+        {
+            return;
+        }
+
+        _signInStarted = true;
+        Navigation.NavigateTo(destination == AuthenticationDestination.Setup
+            ? "/setup"
+            : "/dashboard");
+    }
+
     // Google's sign-in button is rendered into the container above by the interop module, which
     // completes the browser call when the user clicks it. The container only exists after the first
     // render, so the sign-in flow is started once here rather than from a click handler on a
