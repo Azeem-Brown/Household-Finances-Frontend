@@ -28,6 +28,8 @@ public class MainLayoutTests : BunitContext, IAsyncLifetime
         Services.AddMudServices();
         Services.AddScoped<ThemeService>();
         Services.AddSingleton<IAuthenticationService>(new StubAuthenticationService());
+        Services.AddSingleton<IApiClient>(new StubApiClient());
+        Services.AddScoped<HouseholdContextService>();
     }
 
     // The dialog and snackbar providers resolve services that only implement IAsyncDisposable, so

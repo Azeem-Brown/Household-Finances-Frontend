@@ -1,0 +1,241 @@
+@page "/branding"
+@inject HouseholdContextService HouseholdContext
+@inject IApiClient ApiClient
+
+<PageTitle>Household branding | Household Finances</PageTitle>
+
+<PageHeader Title="Household branding" Subtitle="Upload a logo that identifies your household." />
+
+@if (_loadError is not null)
+{
+    <MudAlert Severity="Severity.Error" data-testid="branding-error">@_loadError</MudAlert>
+}
+else if (!HouseholdContext.IsLoaded)
+{
+    <MudProgressLinear Indeterminate="true" data-testid="branding-loading" />
+}
+else if (HouseholdContext.SelectedHousehold is null)
+{
+    <MudAlert Severity="Severity.Info" data-testid="branding-no-household">
+        You are not a member of a household yet. Create one from Setup first.
+    </MudAlert>
+}
+else
+{
+    <MudPaper Class="pa-6" Elevation="1" Style="max-width: 34rem;">
+        <MudText Typo="Typo.h6" Class="mb-1">@HouseholdContext.SelectedHousehold.Name</MudText>
+        <MudText Typo="Typo.body2" Class="mb-4 mud-text-secondary">
+            PNG, JPEG, or WebP, up to 2 MB. Any household member can change the logo.
+        </MudText>
+
+        <div class="d-flex align-center mb-4">
+            @if (_logoDataUrl is not null)
+            {
+                <img src="@_logoDataUrl" alt="Household logo" data-testid="branding-logo" class="household-logo-preview" />
+            }
+            else
+            {
+                <MudAvatar Color="Color.Secondary" Size="Size.Large" data-testid="branding-placeholder">
+                    <MudIcon Icon="@Icons.Material.Filled.Home" />
+                </MudAvatar>
+            }
+        </div>
+
+        <InputFile OnChange="OnFileSelected"
+                   accept="image/png,image/jpeg,image/webp"
+                   disabled="@_isBusy"
+                   data-testid="branding-upload" />
+
+        @if (_errorMessage is not null)
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-4" data-testid="branding-upload-error">@_errorMessage</MudAlert>
+        }
+
+        @if (_statusMessage is not null)
+        {
+            <MudAlert Severity="Severity.Success" Class="mt-4" data-testid="branding-status">@_statusMessage</MudAlert>
+        }
+
+        @if (_logoDataUrl is not null)
+        {
+            <MudButton Variant="Variant.Outlined"
+                       Color="Color.Error"
+                       Class="mt-4"
+                       Disabled="@_isBusy"
+                       OnClick="RemoveAsync"
+                       data-testid="branding-remove">
+                Remove logo
+            </MudButton>
+        }
+    </MudPaper>
+}
+
+@code {
+    /// <summary>The largest upload the API accepts, mirrored here so the client rejects early.</summary>
+    public const int MaxLogoBytes = 2 * 1024 * 1024;
+
+    /// <summary>The media types the API accepts.</summary>
+    public static readonly IReadOnlyList<string> AllowedContentTypes = new[] { "image/png", "image/jpeg", "image/webp" };
+
+    /// <summary>Message shown when the chosen file exceeds <see cref="MaxLogoBytes"/>.</summary>
+    public const string TooLargeMessage = "That image is larger than 2 MB. Choose a smaller file.";
+
+    /// <summary>Message shown when the chosen file is not an accepted image type.</summary>
+    public const string UnsupportedTypeMessage = "Choose a PNG, JPEG, or WebP image.";
+
+    private string? _logoDataUrl;
+    private string? _errorMessage;
+    private string? _statusMessage;
+    private string? _loadError;
+    private bool _isBusy;
+
+    private string? LogoPath =>
+        HouseholdContext.SelectedHousehold is null
+            ? null
+            : $"/api/v1/households/{HouseholdContext.SelectedHousehold.Id}/logo";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            await HouseholdContext.EnsureLoadedAsync();
+            await LoadLogoAsync();
+        }
+        catch (ClientErrorException exception)
+        {
+            _loadError = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            _loadError = ClientErrorFormatter.Format(ClientErrorCode.Unknown, exception.GetType().Name);
+        }
+    }
+
+    /// <summary>
+    /// Resolves the media type to send: the type the browser reported when it is one the API
+    /// accepts, otherwise the type implied by the file extension. Browsers occasionally report an
+    /// empty or generic type for a valid image, so the extension is the fallback; an unknown
+    /// extension is rejected rather than guessed.
+    /// </summary>
+    /// <param name="file">The chosen file.</param>
+    /// <returns>The media type, or <see langword="null"/> when the file is not an accepted image.</returns>
+    private static string? ResolveContentType(IBrowserFile file)
+    {
+        if (AllowedContentTypes.Contains(file.ContentType, StringComparer.OrdinalIgnoreCase))
+        {
+            return file.ContentType;
+        }
+
+        return Path.GetExtension(file.Name).ToLowerInvariant() switch
+        {
+            ".png" => "image/png",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".webp" => "image/webp",
+            _ => null
+        };
+    }
+
+    private async Task LoadLogoAsync()
+    {
+        _logoDataUrl = null;
+
+        if (LogoPath is null)
+        {
+            return;
+        }
+
+        FileContent? logo = await ApiClient.GetFileAsync(LogoPath);
+        if (logo is not null)
+        {
+            _logoDataUrl = $"data:{logo.ContentType};base64,{Convert.ToBase64String(logo.Content)}";
+        }
+    }
+
+    private async Task OnFileSelected(InputFileChangeEventArgs args)
+    {
+        _errorMessage = null;
+        _statusMessage = null;
+
+        if (LogoPath is null)
+        {
+            return;
+        }
+
+        // Validate before reading: a rejected upload must never replace the current logo.
+        if (args.File.Size > MaxLogoBytes)
+        {
+            _errorMessage = TooLargeMessage;
+            return;
+        }
+
+        string? contentType = ResolveContentType(args.File);
+        if (contentType is null)
+        {
+            _errorMessage = UnsupportedTypeMessage;
+            return;
+        }
+
+        _isBusy = true;
+        StateHasChanged();
+
+        try
+        {
+            using MemoryStream buffer = new MemoryStream();
+            await using (Stream source = args.File.OpenReadStream(MaxLogoBytes))
+            {
+                await source.CopyToAsync(buffer);
+            }
+
+            await ApiClient.PutFileAsync(LogoPath, args.File.Name, contentType, buffer.ToArray());
+            await LoadLogoAsync();
+            _statusMessage = "Logo updated.";
+        }
+        catch (ClientErrorException exception)
+        {
+            _errorMessage = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = ClientErrorFormatter.Format(ClientErrorCode.Unknown, exception.GetType().Name);
+        }
+        finally
+        {
+            _isBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task RemoveAsync()
+    {
+        _errorMessage = null;
+        _statusMessage = null;
+
+        if (LogoPath is null)
+        {
+            return;
+        }
+
+        _isBusy = true;
+        StateHasChanged();
+
+        try
+        {
+            await ApiClient.DeleteAsync(LogoPath);
+            _logoDataUrl = null;
+            _statusMessage = "Logo removed.";
+        }
+        catch (ClientErrorException exception)
+        {
+            _errorMessage = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = ClientErrorFormatter.Format(ClientErrorCode.Unknown, exception.GetType().Name);
+        }
+        finally
+        {
+            _isBusy = false;
+            StateHasChanged();
+        }
+    }
+}

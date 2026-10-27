@@ -194,6 +194,52 @@ internal sealed class StubApiClient : IApiClient
         return Throw is null ? Task.CompletedTask : Task.FromException(Throw);
     }
 
+    /// <summary>Gets the file uploads that were made, in order.</summary>
+    public List<(string Path, string FileName, string ContentType, byte[] Content)> FileUploads { get; } = new();
+
+    /// <summary>Gets the image downloads that were requested, in order.</summary>
+    public List<string> FileGets { get; } = new();
+
+    /// <summary>Gets per-path images returned by <see cref="GetFileAsync"/>, or null for none.</summary>
+    public Dictionary<string, FileContent?> FileResponses { get; } = new(StringComparer.Ordinal);
+
+    /// <inheritdoc />
+    public Task PutFileAsync(
+        string path,
+        string fileName,
+        string contentType,
+        byte[] content,
+        CancellationToken cancellationToken = default)
+    {
+        FileUploads.Add((path, fileName, contentType, content));
+
+        if (ThrowByPathForPut.TryGetValue(path, out Exception? uploadThrow))
+        {
+            return Task.FromException(uploadThrow);
+        }
+
+        return Throw is null ? Task.CompletedTask : Task.FromException(Throw);
+    }
+
+    /// <inheritdoc />
+    public Task<FileContent?> GetFileAsync(string path, CancellationToken cancellationToken = default)
+    {
+        FileGets.Add(path);
+
+        if (ThrowByPath.TryGetValue(path, out Exception? pathThrow))
+        {
+            return Task.FromException<FileContent?>(pathThrow);
+        }
+
+        if (Throw is not null)
+        {
+            return Task.FromException<FileContent?>(Throw);
+        }
+
+        FileContent? content = FileResponses.TryGetValue(path, out FileContent? registered) ? registered : null;
+        return Task.FromResult(content);
+    }
+
     /// <inheritdoc />
     public Task<TResponse> PostAnonymousAsync<TRequest, TResponse>(
         string path,

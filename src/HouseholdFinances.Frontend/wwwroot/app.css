@@ -54,3 +54,9 @@ h1:focus {
 .validation-message {
     color: #e50000;
 }
+.household-logo-preview {
+    max-width: 96px;
+    max-height: 96px;
+    object-fit: contain;
+}
+
