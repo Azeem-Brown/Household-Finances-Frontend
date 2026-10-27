@@ -25,6 +25,7 @@ public class HouseholdsPageTests : BunitContext
 {
     private static readonly Guid FirstId = Guid.Parse("11111111-1111-1111-1111-111111111111");
     private static readonly Guid SecondId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+    private static readonly Guid ThirdId = Guid.Parse("33333333-3333-3333-3333-333333333333");
 
     private readonly StubApiClient _apiClient = new();
     private readonly BunitNavigationManager _navigation;
@@ -214,6 +215,191 @@ public class HouseholdsPageTests : BunitContext
         });
     }
 
+    [Fact]
+    public void Households_CreateForm_AddsAndSelectsTheNewHousehold()
+    {
+        ArrangeHouseholds();
+        var created = new Household { Id = ThirdId, Name = "Blue Household", IsCreator = true, MemberCount = 1 };
+
+        var cut = Render<Households>();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-testid='household-option-1']")));
+
+        cut.Find("[data-testid='households-create-name']").Input("Blue Household");
+
+        // The list the API returns once the household exists.
+        ArrangeList(
+            new Household { Id = FirstId, Name = "Brown Household" },
+            new Household { Id = SecondId, Name = "Green Household" },
+            created);
+        _apiClient.PostResponse = created;
+
+        cut.Find("form").Submit();
+
+        cut.WaitForAssertion(() =>
+        {
+            var option = cut.Find("[data-testid='household-option-2']");
+            Assert.Contains("Blue Household", option.TextContent);
+            Assert.Equal("true", option.GetAttribute("aria-current"));
+        });
+
+        var request = Assert.Single(_apiClient.Posts);
+        Assert.Equal(HouseholdContextService.HouseholdsPath, request.Path);
+        Assert.Contains("Blue Household", request.Body!.ToString());
+    }
+
+    [Fact]
+    public void Households_CreateForm_WithEmptyName_ShowsValidationAndDoesNotPost()
+    {
+        ArrangeHouseholds();
+
+        var cut = Render<Households>();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-testid='household-option-0']")));
+
+        cut.Find("form").Submit();
+
+        cut.WaitForAssertion(() =>
+            Assert.Contains(Households.CreateNameRequiredMessage, cut.Markup));
+        Assert.Empty(_apiClient.Posts);
+    }
+
+    [Fact]
+    public void Households_Leave_AsksForConfirmationBeforeSendingAnything()
+    {
+        ArrangeHouseholds();
+
+        var cut = Render<Households>();
+
+        cut.WaitForAssertion(() =>
+            Assert.NotEmpty(cut.FindAll("[data-testid='household-leave-0']")));
+
+        cut.Find("[data-testid='household-leave-0']").Click();
+
+        // The confirmation step must exist and nothing may be sent before it is accepted.
+        Assert.NotEmpty(cut.FindAll("[data-testid='household-confirm-0']"));
+        Assert.Contains(Households.LeaveConfirmationMessage, cut.Markup);
+        Assert.Empty(_apiClient.Deletes);
+    }
+
+    [Fact]
+    public void Households_Leave_CanBeCancelledWithoutSendingAnything()
+    {
+        ArrangeHouseholds();
+
+        var cut = Render<Households>();
+
+        cut.WaitForAssertion(() =>
+            Assert.NotEmpty(cut.FindAll("[data-testid='household-leave-0']")));
+
+        cut.Find("[data-testid='household-leave-0']").Click();
+        cut.Find("[data-testid='household-cancel-0']").Click();
+
+        cut.WaitForAssertion(() =>
+            Assert.NotEmpty(cut.FindAll("[data-testid='household-leave-0']")));
+        Assert.Empty(_apiClient.Deletes);
+    }
+
+    [Fact]
+    public void Households_Leave_Confirmed_RemovesOnlyTheMembershipAndRefreshesTheList()
+    {
+        ArrangeHouseholds();
+
+        var cut = Render<Households>();
+
+        cut.WaitForAssertion(() =>
+            Assert.NotEmpty(cut.FindAll("[data-testid='household-leave-0']")));
+
+        cut.Find("[data-testid='household-leave-0']").Click();
+
+        // After leaving, the API no longer returns that household for this user.
+        ArrangeList(new Household { Id = SecondId, Name = "Green Household" });
+
+        cut.Find("[data-testid='household-confirm-0']").Click();
+
+        cut.WaitForAssertion(() =>
+            Assert.Equal(
+                Households.MembershipPathFor(FirstId),
+                Assert.Single(_apiClient.Deletes)));
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Single(cut.FindAll("[data-testid='household-option-0']"));
+            Assert.Contains("Green Household", cut.Find("[data-testid='household-option-0']").TextContent);
+        });
+    }
+
+    [Fact]
+    public void Households_Delete_IsOfferedOnlyToASoleCreator()
+    {
+        ArrangeList(
+            new Household { Id = FirstId, Name = "Sole creator", IsCreator = true, MemberCount = 1 },
+            new Household { Id = SecondId, Name = "Creator with others", IsCreator = true, MemberCount = 2 },
+            new Household { Id = ThirdId, Name = "Plain member", IsCreator = false, MemberCount = 1 });
+
+        var cut = Render<Households>();
+
+        cut.WaitForAssertion(() =>
+        {
+            // Deleting removes the household for everyone, so it is only offered when the user
+            // created it and nobody else still belongs to it.
+            Assert.NotEmpty(cut.FindAll("[data-testid='household-delete-0']"));
+            Assert.Empty(cut.FindAll("[data-testid='household-delete-1']"));
+            Assert.Empty(cut.FindAll("[data-testid='household-delete-2']"));
+        });
+
+        // Every row keeps the leave option, which is what the other two members can do instead.
+        Assert.NotEmpty(cut.FindAll("[data-testid='household-leave-1']"));
+        Assert.NotEmpty(cut.FindAll("[data-testid='household-leave-2']"));
+    }
+
+    [Fact]
+    public void Households_Delete_Confirmed_CallsTheHouseholdEndpoint()
+    {
+        ArrangeList(new Household { Id = FirstId, Name = "Sole creator", IsCreator = true, MemberCount = 1 });
+
+        var cut = Render<Households>();
+
+        cut.WaitForAssertion(() =>
+            Assert.NotEmpty(cut.FindAll("[data-testid='household-delete-0']")));
+
+        cut.Find("[data-testid='household-delete-0']").Click();
+
+        Assert.Contains(Households.DeleteConfirmationMessage, cut.Markup);
+        Assert.Empty(_apiClient.Deletes);
+
+        cut.Find("[data-testid='household-confirm-0']").Click();
+
+        cut.WaitForAssertion(() =>
+            Assert.Equal(
+                Households.HouseholdPathFor(FirstId),
+                Assert.Single(_apiClient.Deletes)));
+    }
+
+    [Fact]
+    public void Households_LeaveFailure_ShowsTheConventionMessageAndKeepsTheList()
+    {
+        ArrangeHouseholds();
+        _apiClient.ThrowByPathForDelete[Households.MembershipPathFor(FirstId)] =
+            new ClientErrorException(ClientErrorCode.Conflict, "MemberCount");
+
+        var cut = Render<Households>();
+
+        cut.WaitForAssertion(() =>
+            Assert.NotEmpty(cut.FindAll("[data-testid='household-leave-0']")));
+
+        cut.Find("[data-testid='household-leave-0']").Click();
+        cut.Find("[data-testid='household-confirm-0']").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            var alert = cut.Find("[data-testid='households-error']");
+            Assert.Equal("Conflict MemberCount", alert.TextContent.Trim());
+        });
+
+        Assert.NotEmpty(cut.FindAll("[data-testid='household-option-0']"));
+    }
+
     private void ArrangeHouseholds()
     {
         _apiClient.GetResponsesByPath[HouseholdContextService.HouseholdsPath] = new List<Household>
@@ -222,4 +408,7 @@ public class HouseholdsPageTests : BunitContext
             new Household { Id = SecondId, Name = "Green Household" }
         };
     }
+
+    private void ArrangeList(params Household[] households) =>
+        _apiClient.GetResponsesByPath[HouseholdContextService.HouseholdsPath] = households.ToList();
 }

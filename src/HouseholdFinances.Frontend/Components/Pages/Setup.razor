@@ -1,6 +1,7 @@
 @page "/setup"
 @using HouseholdFinances.Frontend.Models
 @inject IApiClient ApiClient
+@inject HouseholdContextService HouseholdContext
 @inject NavigationManager Navigation
 
 <PageTitle>Setup | Household Finances</PageTitle>
@@ -9,18 +10,39 @@
 
 <MudPaper Class="pa-6" Elevation="1" Style="max-width: 30rem;">
     <MudText Typo="Typo.body1" Class="mb-4">
-        Create your household. You become its first member, and you reach your dashboard once it
-        exists.
+        Create a household. You become its first member and reach its dashboard once it exists, and
+        you can create more households and switch between them afterwards.
     </MudText>
 
-    <MudTextField @bind-Value="_name"
-                  @bind-Value:after="OnNameChanged"
-                  Label="Household name"
-                  Variant="Variant.Outlined"
-                  Immediate="true"
-                  Error="_nameError is not null"
-                  ErrorText="@_nameError"
-                  data-testid="setup-name" />
+    @* A real form is what makes Enter work: the browser submits the form when Enter is pressed in
+       the only text field, and the button is the submit control, so both paths run one handler. *@
+    <form @onsubmit="CreateHouseholdAsync" @onsubmit:preventDefault>
+        <MudTextField @bind-Value="_name"
+                      @bind-Value:after="OnNameChanged"
+                      Label="Household name"
+                      Variant="Variant.Outlined"
+                      Immediate="true"
+                      Error="_nameError is not null"
+                      ErrorText="@_nameError"
+                      data-testid="setup-name" />
+
+        @if (_isSubmitting)
+        {
+            <div class="d-flex align-center mt-4" data-testid="setup-progress">
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Primary" />
+                <MudText Typo="Typo.body2" Class="ml-3">Creating your household...</MudText>
+            </div>
+        }
+
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   Class="mt-4"
+                   ButtonType="ButtonType.Submit"
+                   Disabled="_isSubmitting"
+                   data-testid="setup-submit">
+            @SubmitText
+        </MudButton>
+    </form>
 
     @if (_errorMessage is not null)
     {
@@ -28,15 +50,6 @@
             <MudAlert Severity="Severity.Error" Class="mt-4">@_errorMessage</MudAlert>
         </div>
     }
-
-    <MudButton Variant="Variant.Filled"
-               Color="Color.Primary"
-               Class="mt-4"
-               Disabled="_isSubmitting"
-               OnClick="CreateHouseholdAsync"
-               data-testid="setup-submit">
-        Create household
-    </MudButton>
 </MudPaper>
 
 @code {
@@ -54,6 +67,10 @@
     private bool _isSubmitting;
     private string? _errorMessage;
 
+    // The button says what is happening, so a slow request is visible rather than looking like a
+    // click that did nothing.
+    private string SubmitText => _isSubmitting ? "Creating..." : "Create household";
+
     // Client-side validation mirrors the backend rule: a name must contain at least one
     // non-whitespace character. The backend enforces no maximum length, so none is imposed here.
     private static string? ValidateName(string? name) =>
@@ -70,6 +87,14 @@
 
     private async Task CreateHouseholdAsync()
     {
+        // A browser submits the form for a click on the submit button and for Enter, so both paths
+        // arrive here. The guard makes a repeated submit event a no-op rather than a duplicate
+        // household.
+        if (_isSubmitting)
+        {
+            return;
+        }
+
         _errorMessage = null;
 
         // Reject an empty or whitespace-only name before any request is sent; the field shows the
@@ -87,9 +112,19 @@
         {
             // The backend creates the current user's membership alongside the household, so the
             // client only sends the name; it never creates a user-household association itself.
-            await ApiClient.PostAsync<CreateHouseholdRequest, Household>(
+            Household? created = await ApiClient.PostAsync<CreateHouseholdRequest, Household>(
                 HouseholdsPath,
                 new CreateHouseholdRequest(_name!.Trim()));
+
+            // The circuit caches the household list, so it is refreshed and the new household is
+            // selected before navigating. Without this the dashboard would still summarise the
+            // household that happened to sort first, which looked like the create had failed.
+            await HouseholdContext.RefreshAsync();
+
+            if (created is not null)
+            {
+                HouseholdContext.Select(created.Id);
+            }
 
             Navigation.NavigateTo(DashboardPath);
         }

@@ -2,6 +2,7 @@ using System.Text.Json;
 using Bunit;
 using Bunit.TestDoubles;
 using HouseholdFinances.Frontend.Components.Pages;
+using HouseholdFinances.Frontend.Models;
 using HouseholdFinances.Frontend.Services;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
@@ -33,6 +34,8 @@ public class SetupPageTests : BunitContext
         JSInterop.Mode = JSRuntimeMode.Loose;
         Services.AddMudServices();
         Services.AddSingleton<IApiClient>(_apiClient);
+        // Creating refreshes and selects in the shared context, so the page resolves this.
+        Services.AddScoped<HouseholdContextService>();
 
         _navigation = (BunitNavigationManager)Services.GetRequiredService<NavigationManager>();
     }
@@ -100,8 +103,7 @@ public class SetupPageTests : BunitContext
     }
 
     [Fact]
-    public void Submit_WithValidName_TrimsTheNameBeforeSending()
-    {
+    public void Submit_WithValidName_TrimsTheNameBeforeSending()    {
         var cut = Render<Setup>();
 
         cut.Find("input").Input("  Family  ");
@@ -146,5 +148,43 @@ public class SetupPageTests : BunitContext
             Assert.Equal("Unknown InvalidOperationException", alert.TextContent.Trim());
             Assert.Equal("http://localhost/", _navigation.Uri);
         });
+    }
+
+    [Fact]
+    public void Submit_BySubmittingTheForm_CreatesTheHouseholdOnceAndNavigates()
+    {
+        var cut = Render<Setup>();
+
+        cut.Find("input").Input("Family");
+
+        // Submitting the form is what the browser does when Enter is pressed in the name field.
+        cut.Find("form").Submit();
+
+        cut.WaitForAssertion(() =>
+            Assert.EndsWith(Setup.DashboardPath, _navigation.Uri, StringComparison.Ordinal));
+        Assert.Single(_apiClient.Posts);
+        Assert.Empty(cut.FindAll("[data-testid='setup-error']"));
+    }
+
+    [Fact]
+    public void Submit_WithValidName_SelectsTheCreatedHouseholdBeforeNavigating()
+    {
+        var created = new Household { Id = Guid.NewGuid(), Name = "Family", IsCreator = true, MemberCount = 1 };
+        _apiClient.PostResponse = created;
+        _apiClient.GetResponsesByPath[HouseholdContextService.HouseholdsPath] =
+            new List<Household> { created };
+
+        var cut = Render<Setup>();
+
+        cut.Find("input").Input("Family");
+        cut.Find("[data-testid='setup-submit']").Click();
+
+        cut.WaitForAssertion(() =>
+            Assert.EndsWith(Setup.DashboardPath, _navigation.Uri, StringComparison.Ordinal));
+
+        // The dashboard reads this selection, so the user lands on the household they just created
+        // rather than on whichever household happens to sort first.
+        var householdContext = Services.GetRequiredService<HouseholdContextService>();
+        Assert.Equal(created.Id, householdContext.SelectedHousehold!.Id);
     }
 }
