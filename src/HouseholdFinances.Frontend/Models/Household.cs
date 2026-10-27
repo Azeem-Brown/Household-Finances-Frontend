@@ -31,4 +31,16 @@ public class Household
     /// The Dashboard uses it to tell "no entries at all" apart from "no occurrences in this window".
     /// </summary>
     public int BillEntryCount { get; set; }
+
+    /// <summary>
+    /// Whether the current user created the household. Only the creator may delete it, so the
+    /// household list offers deletion on this basis.
+    /// </summary>
+    public bool IsCreator { get; set; }
+
+    /// <summary>
+    /// The number of users who currently belong to the household. A creator may only delete a
+    /// household they are the sole member of, so the list offers deletion only at one.
+    /// </summary>
+    public int MemberCount { get; set; }
 }

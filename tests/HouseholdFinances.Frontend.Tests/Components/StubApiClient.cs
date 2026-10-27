@@ -99,6 +99,19 @@ internal sealed class StubApiClient : IApiClient
     /// </summary>
     public Dictionary<string, Exception> ThrowByPathForPatch { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Gets or sets the response returned by <see cref="PostAsync{TRequest, TResponse}"/> when no
+    /// path-specific response is registered in <see cref="PostResponsesByPath"/>. A page that only
+    /// sends a create request and navigates does not need one, so it defaults to null.
+    /// </summary>
+    public object? PostResponse { get; set; }
+
+    /// <summary>
+    /// Gets per-path responses for <see cref="PostAsync{TRequest, TResponse}"/>. A path registered
+    /// here takes precedence over <see cref="PostResponse"/>.
+    /// </summary>
+    public Dictionary<string, object?> PostResponsesByPath { get; } = new(StringComparer.Ordinal);
+
     /// <inheritdoc />
     public Task<TResponse> PostAsync<TRequest, TResponse>(
         string path,
@@ -107,9 +120,14 @@ internal sealed class StubApiClient : IApiClient
     {
         Posts.Add(new RecordedPost(path, body));
 
-        return Throw is null
-            ? Task.FromResult(default(TResponse)!)
-            : Task.FromException<TResponse>(Throw);
+        if (Throw is not null)
+        {
+            return Task.FromException<TResponse>(Throw);
+        }
+
+        var response = PostResponsesByPath.TryGetValue(path, out var mapped) ? mapped : PostResponse;
+
+        return Task.FromResult((TResponse)response!);
     }
 
     /// <inheritdoc />
