@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [DEV]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Guard Razor code against var
+        run: |
+          # The .editorconfig explicit-type rule only reaches compiled C#, not Razor @code blocks,
+          # so this catches a var introduced in a component (issue #66).
+          if grep -rnE '^[[:space:]]+var[[:space:]]+[A-Za-z_]' src --include='*.razor'; then
+            echo "::error::Use an explicit type instead of var in Razor code blocks (issue #66)."
+            exit 1
+          fi
+
+      - name: Restore
+        run: dotnet restore HouseholdFinances.slnx
+
+      - name: Build
+        run: dotnet build HouseholdFinances.slnx -c Release --no-restore
+
+      - name: Test
+        run: dotnet test HouseholdFinances.slnx -c Release --no-restore --no-build

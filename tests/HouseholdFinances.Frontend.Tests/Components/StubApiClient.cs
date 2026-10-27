@@ -1,0 +1,272 @@
+using HouseholdFinances.Frontend.Models;
+using HouseholdFinances.Frontend.Services;
+
+namespace HouseholdFinances.Frontend.Tests.Components;
+
+/// <summary>
+/// A controllable <see cref="IApiClient"/> test double for component tests. It records the
+/// authenticated GET, POST, PUT, PATCH, and DELETE calls a component makes and lets a test return a
+/// response or throw, so pages such as Setup, Dashboard, Income, and Profile can be exercised
+/// without a live backend.
+/// </summary>
+internal sealed class StubApiClient : IApiClient
+{
+    /// <summary>Gets the authenticated POST calls that were made, in order.</summary>
+    public List<RecordedPost> Posts { get; } = new();
+
+    /// <summary>Gets the authenticated PUT calls that were made, in order.</summary>
+    public List<RecordedPost> Puts { get; } = new();
+
+    /// <summary>Gets the authenticated PATCH calls that were made, in order.</summary>
+    public List<RecordedPost> Patches { get; } = new();
+
+    /// <summary>Gets the authenticated DELETE paths that were requested, in order.</summary>
+    public List<string> Deletes { get; } = new();
+
+    /// <summary>Gets the authenticated GET paths that were requested, in order.</summary>
+    public List<string> Gets { get; } = new();
+
+    /// <summary>
+    /// Gets or sets the response returned by <see cref="GetAsync{TResponse}"/> when no path-specific
+    /// response is registered in <see cref="GetResponsesByPath"/>.
+    /// </summary>
+    public object? GetResponse { get; set; }
+
+    /// <summary>
+    /// Gets per-path responses for <see cref="GetAsync{TResponse}"/>, used when a component makes
+    /// several GETs that return different shapes (for example the household list and then that
+    /// household's income). A path registered here takes precedence over <see cref="GetResponse"/>.
+    /// </summary>
+    public Dictionary<string, object?> GetResponsesByPath { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Gets or sets the response returned for a GET whose path ends in <c>/goals</c> when the path
+    /// is not registered in <see cref="GetResponsesByPath"/>. It defaults to no goals so tests that
+    /// only care about the household summary do not have to register the dashboard's second call.
+    /// </summary>
+    public object? GoalsResponse { get; set; } = new List<Goal>();
+
+    /// <summary>
+    /// Gets or sets an exception to throw instead of returning a response from
+    /// <see cref="GetAsync{TResponse}"/> or <see cref="PostAsync{TRequest, TResponse}"/>.
+    /// </summary>
+    public Exception? Throw { get; set; }
+
+    /// <summary>
+    /// Gets per-path exceptions for <see cref="GetAsync{TResponse}"/>, so a test can fail one call
+    /// (for example a nested income request returning NotFound) while earlier calls succeed. A path
+    /// registered here takes precedence over <see cref="Throw"/>.
+    /// </summary>
+    public Dictionary<string, Exception> ThrowByPath { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Gets per-path exceptions for <see cref="PutAsync{TRequest, TResponse}"/>, so a test can fail
+    /// a single update while earlier calls succeed. A path registered here takes precedence over
+    /// <see cref="Throw"/>.
+    /// </summary>
+    public Dictionary<string, Exception> ThrowByPathForPut { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Gets per-path exceptions for <see cref="DeleteAsync}"/>. A path registered here takes
+    /// precedence over <see cref="Throw"/>.
+    /// </summary>
+    public Dictionary<string, Exception> ThrowByPathForDelete { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Gets or sets the response returned by <see cref="PatchAsync{TRequest, TResponse}"/> when no
+    /// path-specific response is registered in <see cref="PatchResponsesByPath"/>. This is kept
+    /// separate from <see cref="GetResponse"/> so a page can load over GET and save over PATCH with
+    /// different payloads.
+    /// </summary>
+    public object? PatchResponse { get; set; }
+
+    /// <summary>
+    /// Gets per-path responses for <see cref="PatchAsync{TRequest, TResponse}"/>. A path registered
+    /// here takes precedence over <see cref="PatchResponse"/>.
+    /// </summary>
+    public Dictionary<string, object?> PatchResponsesByPath { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Gets or sets an exception for <see cref="PatchAsync{TRequest, TResponse}"/>, so a save can
+    /// fail while the initial GET still succeeds. Unlike <see cref="Throw"/> it does not affect
+    /// other verbs.
+    /// </summary>
+    public Exception? ThrowForPatch { get; set; }
+
+    /// <summary>
+    /// Gets per-path exceptions for <see cref="PatchAsync{TRequest, TResponse}"/>. A path registered
+    /// here takes precedence over <see cref="ThrowForPatch"/>.
+    /// </summary>
+    public Dictionary<string, Exception> ThrowByPathForPatch { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Gets or sets the response returned by <see cref="PostAsync{TRequest, TResponse}"/> when no
+    /// path-specific response is registered in <see cref="PostResponsesByPath"/>. A page that only
+    /// sends a create request and navigates does not need one, so it defaults to null.
+    /// </summary>
+    public object? PostResponse { get; set; }
+
+    /// <summary>
+    /// Gets per-path responses for <see cref="PostAsync{TRequest, TResponse}"/>. A path registered
+    /// here takes precedence over <see cref="PostResponse"/>.
+    /// </summary>
+    public Dictionary<string, object?> PostResponsesByPath { get; } = new(StringComparer.Ordinal);
+
+    /// <inheritdoc />
+    public Task<TResponse> PostAsync<TRequest, TResponse>(
+        string path,
+        TRequest body,
+        CancellationToken cancellationToken = default)
+    {
+        Posts.Add(new RecordedPost(path, body));
+
+        if (Throw is not null)
+        {
+            return Task.FromException<TResponse>(Throw);
+        }
+
+        var response = PostResponsesByPath.TryGetValue(path, out var mapped) ? mapped : PostResponse;
+
+        return Task.FromResult((TResponse)response!);
+    }
+
+    /// <inheritdoc />
+    public Task<TResponse> GetAsync<TResponse>(string path, CancellationToken cancellationToken = default)
+    {
+        Gets.Add(path);
+
+        if (ThrowByPath.TryGetValue(path, out var pathThrow))
+        {
+            return Task.FromException<TResponse>(pathThrow);
+        }
+
+        if (Throw is not null)
+        {
+            return Task.FromException<TResponse>(Throw);
+        }
+
+        var response = GetResponsesByPath.TryGetValue(path, out var mapped)
+            ? mapped
+            : path.EndsWith("/goals", StringComparison.Ordinal)
+                ? GoalsResponse
+                : GetResponse;
+
+        return Task.FromResult((TResponse)response!);
+    }
+
+    /// <inheritdoc />
+    public Task PostAsync<TRequest>(string path, TRequest body, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("The Setup page never sends a bodyless POST.");
+
+    /// <inheritdoc />
+    public Task<TResponse> PatchAsync<TRequest, TResponse>(
+        string path,
+        TRequest body,
+        CancellationToken cancellationToken = default)
+    {
+        Patches.Add(new RecordedPost(path, body));
+
+        if (ThrowByPathForPatch.TryGetValue(path, out var pathThrow))
+        {
+            return Task.FromException<TResponse>(pathThrow);
+        }
+
+        if (ThrowForPatch is not null)
+        {
+            return Task.FromException<TResponse>(ThrowForPatch);
+        }
+
+        var response = PatchResponsesByPath.TryGetValue(path, out var mapped) ? mapped : PatchResponse;
+
+        return Task.FromResult((TResponse)response!);
+    }
+
+    /// <inheritdoc />
+    public Task<TResponse> PutAsync<TRequest, TResponse>(
+        string path,
+        TRequest body,
+        CancellationToken cancellationToken = default)
+    {
+        Puts.Add(new RecordedPost(path, body));
+
+        if (ThrowByPathForPut.TryGetValue(path, out var pathThrow))
+        {
+            return Task.FromException<TResponse>(pathThrow);
+        }
+
+        return Throw is null
+            ? Task.FromResult(default(TResponse)!)
+            : Task.FromException<TResponse>(Throw);
+    }
+
+    /// <inheritdoc />
+    public Task DeleteAsync(string path, CancellationToken cancellationToken = default)
+    {
+        Deletes.Add(path);
+
+        if (ThrowByPathForDelete.TryGetValue(path, out var pathThrow))
+        {
+            return Task.FromException(pathThrow);
+        }
+
+        return Throw is null ? Task.CompletedTask : Task.FromException(Throw);
+    }
+
+    /// <summary>Gets the file uploads that were made, in order.</summary>
+    public List<(string Path, string FileName, string ContentType, byte[] Content)> FileUploads { get; } = new();
+
+    /// <summary>Gets the image downloads that were requested, in order.</summary>
+    public List<string> FileGets { get; } = new();
+
+    /// <summary>Gets per-path images returned by <see cref="GetFileAsync"/>, or null for none.</summary>
+    public Dictionary<string, FileContent?> FileResponses { get; } = new(StringComparer.Ordinal);
+
+    /// <inheritdoc />
+    public Task PutFileAsync(
+        string path,
+        string fileName,
+        string contentType,
+        byte[] content,
+        CancellationToken cancellationToken = default)
+    {
+        FileUploads.Add((path, fileName, contentType, content));
+
+        if (ThrowByPathForPut.TryGetValue(path, out Exception? uploadThrow))
+        {
+            return Task.FromException(uploadThrow);
+        }
+
+        return Throw is null ? Task.CompletedTask : Task.FromException(Throw);
+    }
+
+    /// <inheritdoc />
+    public Task<FileContent?> GetFileAsync(string path, CancellationToken cancellationToken = default)
+    {
+        FileGets.Add(path);
+
+        if (ThrowByPath.TryGetValue(path, out Exception? pathThrow))
+        {
+            return Task.FromException<FileContent?>(pathThrow);
+        }
+
+        if (Throw is not null)
+        {
+            return Task.FromException<FileContent?>(Throw);
+        }
+
+        FileContent? content = FileResponses.TryGetValue(path, out FileContent? registered) ? registered : null;
+        return Task.FromResult(content);
+    }
+
+    /// <inheritdoc />
+    public Task<TResponse> PostAnonymousAsync<TRequest, TResponse>(
+        string path,
+        TRequest body,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("The Setup page never sends an anonymous POST.");
+
+    /// <summary>A recorded authenticated POST, PUT, or PATCH call.</summary>
+    /// <param name="Path">The API path the call targeted.</param>
+    /// <param name="Body">The request body, kept as its declared type for inspection.</param>
+    internal sealed record RecordedPost(string Path, object? Body);
+}

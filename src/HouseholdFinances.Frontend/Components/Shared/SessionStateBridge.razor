@@ -1,0 +1,52 @@
+@* Carries the session identifier from the HTTP request that prerendered this page into the
+   interactive circuit (issue #28). A Blazor Server circuit cannot read cookies or write them, so
+   the identifier travels the supported way: the middleware resolves it on the request, this
+   component registers it with PersistentComponentState while prerendering, and the same component
+   hands it to the circuit's session accessor once the interactive render starts.
+   It renders nothing and must stay outside the Router so it initializes before any page runs. *@
+@inject PersistentComponentState PersistentState
+@inject ISessionIdAccessor SessionIdAccessor
+@inject IHttpContextAccessor HttpContextAccessor
+@inject ILogger<SessionStateBridge> Logger
+
+@code {
+    /// <summary>The persistent component state key holding the session identifier.</summary>
+    public const string PersistedStateKey = "hf_session_id";
+
+    protected override void OnInitialized()
+    {
+        // The interactive circuit receives the value registered during prerendering. Taking it
+        // here is also how this component knows it is no longer prerendering.
+        if (PersistentState.TryTakeFromJson<string>(PersistedStateKey, out string? persisted) &&
+            !string.IsNullOrEmpty(persisted))
+        {
+            SessionIdAccessor.SetSessionId(persisted);
+            return;
+        }
+
+        if (RendererInfo.IsInteractive)
+        {
+            // Interactive without prerendering: there was no request to read the cookie from, so
+            // the session cannot be persisted. The token store reports that loudly instead of
+            // signing the user in to a session that would vanish on reload.
+            Logger.LogWarning(
+                "The session identifier could not be carried into the circuit because the page was not prerendered. "
+                + "Persistent sessions require prerendering.");
+            return;
+        }
+
+        string? sessionId = SessionCookieMiddleware.GetSessionId(HttpContextAccessor.HttpContext);
+        if (string.IsNullOrEmpty(sessionId))
+        {
+            return;
+        }
+
+        PersistentState.RegisterOnPersisting(
+            () =>
+            {
+                PersistentState.PersistAsJson(PersistedStateKey, sessionId);
+                return Task.CompletedTask;
+            },
+            InteractiveServer);
+    }
+}

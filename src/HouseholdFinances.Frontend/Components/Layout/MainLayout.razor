@@ -1,0 +1,210 @@
+﻿@inherits LayoutComponentBase
+@implements IDisposable
+@inject ThemeService ThemeService
+@inject IAuthenticationService AuthenticationService
+@inject HouseholdContextService HouseholdContext
+@inject PageAccessService PageAccess
+@inject IApiClient ApiClient
+@inject NavigationManager Navigation
+
+<MudThemeProvider Theme="@ThemeService.Theme" @bind-IsDarkMode="@ThemeService.IsDarkMode" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="1" Dense="true">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu"
+                       Color="Color.Inherit"
+                       Edge="Edge.Start"
+                       OnClick="ToggleDrawer"
+                       aria-label="Toggle navigation menu" />
+        <MudAvatar Color="Color.Secondary" Size="Size.Small" Class="ml-2" data-testid="shell-logo">
+            @if (_logoDataUrl is not null)
+            {
+                <img src="@_logoDataUrl" alt="Household logo" class="shell-logo-image" />
+            }
+            else
+            {
+                <MudIcon Icon="@Icons.Material.Filled.AccountBalanceWallet" />
+            }
+        </MudAvatar>
+        <MudText Typo="Typo.h6" Class="ml-2">Household Finances</MudText>
+        <MudSpacer />
+        @if (_isSignedIn)
+        {
+            <MudIconButton Icon="@Icons.Material.Filled.Logout"
+                           Color="Color.Inherit"
+                           OnClick="SignOutAsync"
+                           aria-label="Sign out"
+                           data-testid="signout" />
+        }
+        <MudIconButton Icon="@(ThemeService.IsDarkMode ? Icons.Material.Filled.LightMode : Icons.Material.Filled.DarkMode)"
+                       Color="Color.Inherit"
+                       OnClick="ThemeService.ToggleDarkMode"
+                       aria-label="Toggle dark mode" />
+    </MudAppBar>
+
+    <MudDrawer @bind-Open="_drawerOpen" ClipMode="DrawerClipMode.Always" Elevation="2">
+        <MudDrawerHeader>
+            <MudText Typo="Typo.h6">Household Finances</MudText>
+        </MudDrawerHeader>
+        @* Nothing renders until the state is known, so the menu for the wrong state never flashes. *@
+        @if (_isResolved)
+        {
+            <NavMenu State="_accessState" />
+        }
+    </MudDrawer>
+
+    <MudMainContent>
+        <MudContainer MaxWidth="MaxWidth.Large" Class="mt-4 mb-8">
+            @* A page this state does not allow is not rendered at all; RefreshAccessAsync has
+               already sent the browser to the page the state belongs on. *@
+            @if (_isResolved && IsCurrentPageAllowed)
+            {
+                @Body
+            }
+        </MudContainer>
+    </MudMainContent>
+</MudLayout>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>
+
+@code {
+    private bool _drawerOpen = true;
+    private bool _isSignedIn;
+    private bool _isResolved;
+    private AppAccessState _accessState = AppAccessState.SignedOut;
+    private string? _logoDataUrl;
+    private Guid? _logoHouseholdId;
+
+    private void ToggleDrawer() => _drawerOpen = !_drawerOpen;
+
+    // The requested page, normalized so a query string or trailing slash cannot make an allowed
+    // page look disallowed.
+    private string CurrentPath =>
+        PageAccessService.Normalize(Navigation.ToBaseRelativePath(Navigation.Uri));
+
+    private bool IsCurrentPageAllowed => PageAccessService.IsAllowed(_accessState, CurrentPath);
+
+    protected override async Task OnInitializedAsync()
+    {
+        Navigation.LocationChanged += OnLocationChanged;
+        HouseholdContext.Changed += OnHouseholdContextChanged;
+        await RefreshAccessAsync();
+    }
+
+    // The state is resolved before anything renders. Signing in, creating a household, and leaving
+    // or deleting the last one all raise Changed, so the menu and the gate follow without a reload.
+    private async Task RefreshAccessAsync()
+    {
+        await PageAccess.ResolveAsync();
+
+        _accessState = PageAccess.State;
+        _isSignedIn = _accessState != AppAccessState.SignedOut;
+        _isResolved = true;
+
+        await LoadLogoAsync();
+
+        RedirectWhenNotAllowed();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    // A page this state does not allow is replaced by the page the state belongs on. The target is
+    // compared with the current path, so arriving there does not trigger another navigation and the
+    // user cannot be bounced between two pages.
+    private void RedirectWhenNotAllowed()
+    {
+        if (IsCurrentPageAllowed)
+        {
+            return;
+        }
+
+        string target = PageAccessService.RedirectTargetFor(_accessState);
+
+        if (string.Equals(CurrentPath, PageAccessService.Normalize(target), StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        Navigation.NavigateTo(target);
+    }
+
+    private void OnHouseholdContextChanged() => _ = InvokeAsync(RefreshAccessAsync);
+
+    // Branding is decorative: a household or logo that cannot be loaded leaves the placeholder and
+    // must never take the shell down.
+    private async Task LoadLogoAsync()
+    {
+        if (!_isSignedIn)
+        {
+            _logoDataUrl = null;
+            _logoHouseholdId = null;
+            return;
+        }
+
+        try
+        {
+            await HouseholdContext.EnsureLoadedAsync();
+            Household? household = HouseholdContext.SelectedHousehold;
+
+            if (household is null)
+            {
+                _logoDataUrl = null;
+                _logoHouseholdId = null;
+                return;
+            }
+
+            if (_logoHouseholdId == household.Id && _logoDataUrl is not null)
+            {
+                return;
+            }
+
+            FileContent? logo = await ApiClient.GetFileAsync($"/api/v1/households/{household.Id}/logo");
+            _logoDataUrl = logo is null
+                ? null
+                : $"data:{logo.ContentType};base64,{Convert.ToBase64String(logo.Content)}";
+            _logoHouseholdId = household.Id;
+        }
+        catch (Exception)
+        {
+            _logoDataUrl = null;
+            _logoHouseholdId = null;
+        }
+    }
+
+    // The layout outlives a single page, so any navigation re-resolves the state: signing in on the
+    // login page, or asking for a page the state does not allow, only becomes visible this way.
+    private async void OnLocationChanged(object? sender, LocationChangedEventArgs e) =>
+        await RefreshAccessAsync();
+
+    private async Task SignOutAsync()
+    {
+        try
+        {
+            await AuthenticationService.SignOutAsync();
+        }
+        catch (Exception)
+        {
+            // Reaching the login page matters more than the failure: the session check there
+            // reports the truth either way.
+        }
+
+        // The household list belongs to the session that just ended, so it is forgotten here rather
+        // than left for the next user in this circuit to see.
+        HouseholdContext.Reset();
+        _isSignedIn = false;
+        Navigation.NavigateTo(PageAccessService.LoginPath);
+    }
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        Navigation.LocationChanged -= OnLocationChanged;
+        HouseholdContext.Changed -= OnHouseholdContextChanged;
+    }
+}

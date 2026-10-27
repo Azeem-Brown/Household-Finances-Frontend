@@ -1,0 +1,6 @@
+# The production rule in the repository root .editorconfig is not enforced for tests: `var cut =
+# Render<T>()` is the established style across this suite, and replacing 386 occurrences would bury
+# the review of any real change. Replacing them and deleting this override is the deferred task on
+# issue #66.
+[*.cs]
+dotnet_diagnostic.IDE0008.severity = none

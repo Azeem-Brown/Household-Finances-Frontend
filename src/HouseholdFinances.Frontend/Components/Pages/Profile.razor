@@ -1,0 +1,240 @@
+@page "/profile"
+@using HouseholdFinances.Frontend.Models
+@inject IApiClient ApiClient
+
+<PageTitle>Profile | Household Finances</PageTitle>
+
+<PageHeader Title="Profile" Subtitle="Manage your account details." />
+
+@if (_errorMessage is not null)
+{
+    <div data-testid="profile-error">
+        <MudAlert Severity="Severity.Error">@_errorMessage</MudAlert>
+    </div>
+}
+else if (_isLoading)
+{
+    <MudProgressLinear Indeterminate="true" data-testid="profile-loading" />
+}
+else if (_profile is null)
+{
+    <MudPaper Class="pa-6" Elevation="1" data-testid="profile-missing">
+        <MudText Typo="Typo.body1">@MissingProfileMessage</MudText>
+    </MudPaper>
+}
+else
+{
+    <MudPaper Class="pa-6 mb-4" Elevation="1" Style="max-width: 40rem;" data-testid="profile-details">
+        <MudText Typo="Typo.h6" GutterBottom="true">Account details</MudText>
+
+        <MudGrid>
+            <MudItem xs="12" md="6">
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">Name</MudText>
+                <MudText Typo="Typo.body1" data-testid="profile-name">@_profile.Name</MudText>
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">Email</MudText>
+                <MudText Typo="Typo.body1" data-testid="profile-email">@_profile.Email</MudText>
+            </MudItem>
+            <MudItem xs="12">
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">Household</MudText>
+                @if (_household is null)
+                {
+                    <MudText Typo="Typo.body1" data-testid="profile-no-household">@NoHouseholdMessage</MudText>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body1" data-testid="profile-household">@_household.Name</MudText>
+                }
+            </MudItem>
+        </MudGrid>
+
+        <MudText Typo="Typo.caption" Class="mud-text-secondary mt-4 d-block">
+            @EmailReadOnlyMessage
+        </MudText>
+    </MudPaper>
+
+    <MudPaper Class="pa-6" Elevation="1" Style="max-width: 40rem;" data-testid="profile-form">
+        <MudText Typo="Typo.h6" GutterBottom="true">Display name</MudText>
+
+        <MudTextField T="string"
+                      @bind-Value="_displayName"
+                      @bind-Value:after="OnDisplayNameChanged"
+                      Label="Display name"
+                      Variant="Variant.Outlined"
+                      Immediate="true"
+                      Error="_nameError is not null"
+                      ErrorText="@_nameError"
+                      data-testid="profile-name-input" />
+
+        @if (_saveErrorMessage is not null)
+        {
+            <div data-testid="profile-save-error">
+                <MudAlert Severity="Severity.Error" Class="mt-4">@_saveErrorMessage</MudAlert>
+            </div>
+        }
+
+        @if (_savedMessage is not null)
+        {
+            <div data-testid="profile-saved">
+                <MudAlert Severity="Severity.Success" Class="mt-4">@_savedMessage</MudAlert>
+            </div>
+        }
+
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   Class="mt-4"
+                   Disabled="_isSaving"
+                   OnClick="SaveAsync"
+                   data-testid="profile-save">
+            Save changes
+        </MudButton>
+    </MudPaper>
+}
+
+@code {
+    /// <summary>
+    /// The authenticated endpoint that reads and updates the signed-in user's profile. The user is
+    /// resolved from the bearer token server-side, so no user id is ever sent from the client.
+    /// </summary>
+    public const string ProfilePath = "/api/v1/users/me";
+
+    /// <summary>Client-side message shown when the display name is empty or whitespace only.</summary>
+    public const string NameRequiredMessage = "Enter a display name.";
+
+    /// <summary>Guidance shown when the current user has no household membership.</summary>
+    public const string NoHouseholdMessage = "You are not a member of a household yet.";
+
+    /// <summary>
+    /// Explains why the email is not editable here: it is owned by the third-party identity
+    /// provider.
+    /// </summary>
+    public const string EmailReadOnlyMessage =
+        "Your email is managed by your sign-in provider and cannot be changed here.";
+
+    /// <summary>Guidance shown when the profile could not be resolved to a value.</summary>
+    public const string MissingProfileMessage =
+        "Your profile could not be loaded. Try again later.";
+
+    /// <summary>Confirmation shown after the display name is saved.</summary>
+    public const string SavedMessage = "Your display name has been saved.";
+
+    private UserProfile? _profile;
+    private bool _isLoading = true;
+    private string? _errorMessage;
+
+    // The editable display name and its client-side validation message.
+    private string? _displayName;
+    private string? _nameError;
+    private bool _isSaving;
+    private string? _saveErrorMessage;
+    private string? _savedMessage;
+
+    // The household association is shown only when one is available. The profile carries the
+    // user's memberships; a user without one sees guidance instead of a blank value.
+    private Household? _household => _profile?.Households.FirstOrDefault();
+
+    // Client-side validation mirrors the backend rule: a name must contain at least one
+    // non-whitespace character. The read model exposes no password member and nothing here
+    // references the User entity's Password field, so no password or hash can be rendered.
+    private static string? ValidateName(string? name) =>
+        string.IsNullOrWhiteSpace(name) ? NameRequiredMessage : null;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private void OnDisplayNameChanged()
+    {
+        // Clear stale validation, save-error, and confirmation messages as soon as the user edits
+        // the name again.
+        if (_nameError is not null && ValidateName(_displayName) is null)
+        {
+            _nameError = null;
+        }
+
+        _saveErrorMessage = null;
+        _savedMessage = null;
+    }
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+
+        try
+        {
+            _profile = await ApiClient.GetAsync<UserProfile>(ProfilePath);
+            _displayName = _profile.Name;
+        }
+        catch (ClientErrorException exception)
+        {
+            // Every API failure already carries the shared convention message and its significant
+            // identifier (for example "NotFound <id>" when the user cannot be resolved).
+            _errorMessage = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            // Unexpected failures still surface through the shared convention rather than an
+            // unhandled circuit error or a silent blank page.
+            _errorMessage = ClientErrorFormatter.Format(ClientErrorCode.Unknown, exception.GetType().Name);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        _saveErrorMessage = null;
+        _savedMessage = null;
+
+        // Reject an empty or whitespace-only name before any request is sent; the field shows the
+        // message and the handler stops without touching the API.
+        _nameError = ValidateName(_displayName);
+        if (_nameError is not null)
+        {
+            return;
+        }
+
+        _isSaving = true;
+        StateHasChanged();
+
+        try
+        {
+            // The backend owns the trim and returns the updated profile, so the saved value (and
+            // not the raw input) is what the page shows afterwards.
+            UserProfile updated = await ApiClient.PatchAsync<UpdateDisplayNameRequest, UserProfile>(
+                ProfilePath,
+                new UpdateDisplayNameRequest(_displayName!.Trim()));
+
+            _profile = updated;
+            _displayName = updated.Name;
+            _nameError = null;
+            _savedMessage = SavedMessage;
+        }
+        catch (ClientErrorException exception)
+        {
+            // Every API failure already carries the shared convention message and its significant
+            // identifier (for example "InvalidInput Name" when the backend rejects the input).
+            _saveErrorMessage = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            // Unexpected failures still surface through the shared convention rather than an
+            // unhandled circuit error.
+            _saveErrorMessage = ClientErrorFormatter.Format(ClientErrorCode.Unknown, exception.GetType().Name);
+        }
+        finally
+        {
+            _isSaving = false;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// Request body for <c>PATCH /api/v1/users/me</c>. Only the display name is writable; email is
+    /// provider-managed and the password is never accepted by the endpoint. The property name
+    /// matches the backend <c>UpdateDisplayNameRequest</c> so it serializes to <c>name</c>.
+    /// </summary>
+    private sealed record UpdateDisplayNameRequest(string Name);
+}

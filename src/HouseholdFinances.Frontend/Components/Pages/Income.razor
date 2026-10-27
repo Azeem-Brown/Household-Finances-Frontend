@@ -1,0 +1,593 @@
+@page "/income"
+@using System.Globalization
+@using HouseholdFinances.Frontend.Models
+@using IncomeEntry = HouseholdFinances.Frontend.Models.Income
+@inject IApiClient ApiClient
+@inject TimeProvider Clock
+@inject PeriodSelectionService PeriodSelection
+@inject HouseholdContextService HouseholdContext
+
+<PageTitle>Income | Household Finances</PageTitle>
+
+<PageHeader Title="Income" Subtitle="Track the income coming into your household." />
+
+@if (_errorMessage is not null)
+{
+    <div data-testid="income-error">
+        <MudAlert Severity="Severity.Error">@_errorMessage</MudAlert>
+    </div>
+}
+else if (_isLoading)
+{
+    <MudProgressLinear Indeterminate="true" data-testid="income-loading" />
+}
+else if (_household is null)
+{
+    <MudPaper Class="pa-6" Elevation="1" data-testid="income-no-household">
+        <MudText Typo="Typo.body1">@NoHouseholdMessage</MudText>
+    </MudPaper>
+}
+else
+{
+    <div class="d-flex justify-end mb-2">
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.Add"
+                   OnClick="BeginAdd"
+                   data-testid="income-add">
+            Add income
+        </MudButton>
+    </div>
+
+    @if (_operationErrorMessage is not null)
+    {
+        <div data-testid="income-operation-error">
+            <MudAlert Severity="Severity.Error" Class="mb-4">@_operationErrorMessage</MudAlert>
+        </div>
+    }
+
+    @if (_formOpen)
+    {
+        <MudPaper Class="pa-4 mb-4" Elevation="1" data-testid="income-form">
+            <MudText Typo="Typo.h6" GutterBottom="true" data-testid="income-form-title">@FormTitle</MudText>
+
+            <MudGrid>
+                <MudItem xs="12" md="6">
+                    <MudTextField T="string"
+                                  @bind-Value="_name"
+                                  Label="Name"
+                                  Variant="Variant.Outlined"
+                                  Immediate="true"
+                                  Error="_nameError is not null"
+                                  ErrorText="@_nameError"
+                                  data-testid="income-form-name" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudNumericField T="double"
+                                     @bind-Value="_value"
+                                     Label="Value"
+                                     Variant="Variant.Outlined"
+                                     Culture="@CultureInfo.InvariantCulture"
+                                     Error="_valueError is not null"
+                                     ErrorText="@_valueError"
+                                     data-testid="income-form-value" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudDatePicker @bind-Date="_startDate"
+                                   Label="Start date"
+                                   Variant="Variant.Outlined"
+                                   DateFormat="yyyy-MM-dd"
+                                   Editable="true"
+                                   Error="_startDateError is not null"
+                                   ErrorText="@_startDateError"
+                                   data-testid="income-form-start" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudDatePicker @bind-Date="_endDate"
+                                   Label="End date"
+                                   Variant="Variant.Outlined"
+                                   DateFormat="yyyy-MM-dd"
+                                   Editable="true"
+                                   Error="_endDateError is not null"
+                                   ErrorText="@_endDateError"
+                                   data-testid="income-form-end" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudSwitch T="bool"
+                               @bind-Value="_recurring"
+                               Color="Color.Primary"
+                               Label="Recurring"
+                               data-testid="income-recurring-toggle" />
+                </MudItem>
+                @if (_recurring)
+                {
+                    <MudItem xs="12" md="6">
+                        <MudSelect T="Interval?"
+                                   @bind-Value="_interval"
+                                   Label="Interval"
+                                   Variant="Variant.Outlined"
+                                   Error="_intervalError is not null"
+                                   ErrorText="@_intervalError"
+                                   data-testid="income-interval">
+                            @foreach (Interval interval in Intervals)
+                            {
+                                <MudSelectItem T="Interval?" Value="@interval">@interval</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                }
+            </MudGrid>
+
+            <div class="d-flex gap-2 mt-4">
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           Disabled="_isSaving"
+                           OnClick="SaveAsync"
+                           data-testid="income-form-submit">
+                    @SaveButtonText
+                </MudButton>
+                <MudButton Variant="Variant.Text"
+                           Color="Color.Default"
+                           Disabled="_isSaving"
+                           OnClick="CancelEdit"
+                           data-testid="income-form-cancel">
+                    Cancel
+                </MudButton>
+            </div>
+        </MudPaper>
+    }
+
+    @if (IsEmpty)
+    {
+        <MudPaper Class="pa-6" Elevation="1" data-testid="income-empty">
+            <MudText Typo="Typo.h6" GutterBottom="true">No income yet</MudText>
+            <MudText Typo="Typo.body1">@EmptyStateMessage</MudText>
+        </MudPaper>
+    }
+    else
+    {
+        <MudPaper Class="pa-4 mb-4" Elevation="1" data-testid="income-summary">
+            <div class="d-flex align-center flex-wrap gap-4 mb-2">
+                <MudSelect T="Interval"
+                           @bind-Value="SelectedPeriod"
+                           Label="Period"
+                           Variant="Variant.Outlined"
+                           Dense="true"
+                           Style="min-width: 12rem;"
+                           data-testid="income-period">
+                    @foreach (Interval interval in Intervals)
+                    {
+                        <MudSelectItem T="Interval" Value="@interval">@interval</MudSelectItem>
+                    }
+                </MudSelect>
+            </div>
+
+            <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">@TotalLabel</MudText>
+            <MudText Typo="Typo.h5"><span data-testid="income-total">@CombinedTotalText</span></MudText>
+
+            <div class="d-flex flex-wrap gap-6 mt-2">
+                <div>
+                    <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Recurring</MudText>
+                    <MudText Typo="Typo.subtitle1">
+                        <span data-testid="income-recurring-total">@RecurringTotalText</span>
+                    </MudText>
+                </div>
+                <div>
+                    <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">One-off</MudText>
+                    <MudText Typo="Typo.subtitle1">
+                        <span data-testid="income-one-off-total">@OneOffTotalText</span>
+                    </MudText>
+                </div>
+            </div>
+        </MudPaper>
+
+        <div data-testid="income-table">
+            <MudTable T="IncomeEntry" Items="_entries" Elevation="1">
+                <HeaderContent>
+                    <MudTh>Name</MudTh>
+                    <MudTh>Value</MudTh>
+                    <MudTh>Starts</MudTh>
+                    <MudTh>Ends</MudTh>
+                    <MudTh>Recurring</MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd data-testid="income-name">@context.Name</MudTd>
+                    <MudTd data-testid="income-value">@MoneyFormatter.Format(context.Value)</MudTd>
+                    <MudTd data-testid="income-start">@FormatDate(context.StartDate)</MudTd>
+                    <MudTd data-testid="income-end">@FormatDate(context.EndDate)</MudTd>
+                    <MudTd data-testid="income-recurring">@RecurrenceText(context)</MudTd>
+                    <MudTd data-testid="income-actions">
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                                       Color="Color.Primary"
+                                       aria-label="Edit income"
+                                       OnClick="@(() => BeginEdit(context))"
+                                       data-testid="income-edit" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                                       Color="Color.Error"
+                                       aria-label="Delete income"
+                                       OnClick="@(() => DeleteAsync(context))"
+                                       data-testid="income-delete" />
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        </div>
+    }
+}
+
+@code {
+    /// <summary>The authenticated endpoint that lists the current user's households.</summary>
+    public const string HouseholdsPath = "/api/v1/households";
+
+    /// <summary>Guidance shown when the household has no income entries yet.</summary>
+    public const string EmptyStateMessage =
+        "Add your first income entry to start building up your household total.";
+
+    /// <summary>Guidance shown when the current user has no household to list income for.</summary>
+    public const string NoHouseholdMessage =
+        "No household was found for your account. Create one before adding income.";
+
+    /// <summary>Client-side message shown when the name is empty or whitespace only.</summary>
+    public const string NameRequiredMessage = "Enter an income name.";
+
+    /// <summary>Client-side message shown when the value is negative.</summary>
+    public const string ValueNegativeMessage = "Enter an amount of zero or more.";
+
+    /// <summary>Client-side message shown when no start date is selected.</summary>
+    public const string StartDateRequiredMessage = "Select a start date.";
+
+    /// <summary>Client-side message shown when no end date is selected.</summary>
+    public const string EndDateRequiredMessage = "Select an end date.";
+
+    /// <summary>Client-side message shown when the end date precedes the start date.</summary>
+    public const string EndDateBeforeStartMessage = "The end date cannot be before the start date.";
+
+    /// <summary>
+    /// Client-side message shown when a recurring entry has no interval, matching the backend rule
+    /// that an interval is required only when the entry recurs.
+    /// </summary>
+    public const string IntervalRequiredMessage = "Select how often this income repeats.";
+
+    /// <summary>
+    /// The cadence options, in the order fixed by the Interval decision (#4): Daily, Weekly,
+    /// BiWeekly, Monthly, Quarterly, Yearly.
+    /// </summary>
+    public static readonly IReadOnlyList<Interval> Intervals = new[]
+    {
+        Interval.Daily,
+        Interval.Weekly,
+        Interval.BiWeekly,
+        Interval.Monthly,
+        Interval.Quarterly,
+        Interval.Yearly
+    };
+
+    private Household? _household;
+    private IReadOnlyList<IncomeEntry> _entries = Array.Empty<IncomeEntry>();
+    private OccurrenceTotals _totals;
+    private bool _isLoading = true;
+    private string? _errorMessage;
+
+    // Form state. _formOpen controls whether the create/edit panel is shown; _editingId is null
+    // while adding and holds the entry's id while editing.
+    private bool _formOpen;
+    private Guid? _editingId;
+    private string? _name;
+    private double _value;
+    private DateTime? _startDate;
+    private DateTime? _endDate;
+    private bool _recurring;
+    private Interval? _interval;
+    private bool _isSaving;
+    private string? _operationErrorMessage;
+
+    private string? _nameError;
+    private string? _valueError;
+    private string? _startDateError;
+    private string? _endDateError;
+    private string? _intervalError;
+
+    // The form heading and submit label reflect whether the form is adding or editing.
+    private string FormTitle => _editingId is null ? "Add income" : "Edit income";
+
+    private string SaveButtonText => _editingId is null ? "Add income" : "Save changes";
+
+    /// <summary>
+    /// Builds the income collection endpoint for a household. Income is nested under its household,
+    /// so the household identifier is part of the path.
+    /// </summary>
+    /// <param name="householdId">The household whose income entries are addressed.</param>
+    /// <returns>The API path for the household's income entries.</returns>
+    public static string IncomesPathFor(Guid householdId) =>
+        $"/api/v1/households/{householdId}/incomes";
+
+    /// <summary>Builds the endpoint for a single income entry within a household.</summary>
+    /// <param name="householdId">The household the entry belongs to.</param>
+    /// <param name="incomeId">The entry's identifier.</param>
+    /// <returns>The API path for the single income entry.</returns>
+    public static string IncomePathFor(Guid householdId, Guid incomeId) =>
+        $"{IncomesPathFor(householdId)}/{incomeId}";
+
+    // The empty state is shown only once a household exists but has no entries, so a new user is
+    // guided to add income instead of being shown a bare table.
+    private bool IsEmpty => _household is not null && _entries.Count == 0;
+
+    // The period selector writes through to the shared circuit-scoped selection, so Income and
+    // Bills always show the same period. Changing it recomputes the figures from the rows already
+    // loaded, so no request is made.
+    private Interval SelectedPeriod
+    {
+        get => PeriodSelection.Period;
+        set
+        {
+            if (PeriodSelection.Period == value)
+            {
+                return;
+            }
+
+            PeriodSelection.Period = value;
+            RecalculateTotals();
+        }
+    }
+
+    private string TotalLabel => $"Total income ({SelectedPeriod})";
+
+    private string CombinedTotalText => MoneyFormatter.Format(_totals.Combined);
+
+    private string RecurringTotalText => MoneyFormatter.Format(_totals.Recurring);
+
+    private string OneOffTotalText => MoneyFormatter.Format(_totals.OneOff);
+
+    // The only time source on the page. UTC calendar dates match the window rule, so the host
+    // clock is never read directly.
+    private DateOnly Today => DateOnly.FromDateTime(Clock.GetUtcNow().UtcDateTime);
+
+    // Both figures come from the one shared calculator so the two pages cannot diverge. Each
+    // figure is formatted once from its own unrounded value, not from the rounded breakdown.
+    private void RecalculateTotals()
+    {
+        _totals = OccurrenceCalculator.Totals(
+            _entries.Select(entry => new MoneyEntry(
+                entry.Value,
+                entry.StartDate,
+                entry.EndDate,
+                entry.Recurring,
+                entry.Interval)),
+            OccurrenceCalculator.WindowFor(PeriodSelection.Period, Today));
+    }
+
+    // ISO 8601 keeps the displayed dates unambiguous and identical regardless of the host locale.
+    private static string FormatDate(DateTime date) =>
+        date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    // A recurring entry shows its cadence when one is recorded; a one-off entry shows "One-off".
+    private static string RecurrenceText(IncomeEntry income) =>
+        !income.Recurring
+            ? "One-off"
+            : income.Interval is { } interval
+                ? $"Recurring ({interval})"
+                : "Recurring";
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private void BeginAdd()
+    {
+        _editingId = null;
+        _name = string.Empty;
+        _value = 0;
+        // Defaulting both dates to today keeps a new entry valid without extra input; the end date
+        // stays editable and is validated on submit.
+        _startDate = Today.ToDateTime(TimeOnly.MinValue);
+        _endDate = Today.ToDateTime(TimeOnly.MinValue);
+        _recurring = false;
+        _interval = null;
+        ClearErrors();
+        _operationErrorMessage = null;
+        _formOpen = true;
+    }
+
+    private void BeginEdit(IncomeEntry entry)
+    {
+        _editingId = entry.Id;
+        _name = entry.Name;
+        _value = entry.Value;
+        _startDate = entry.StartDate;
+        _endDate = entry.EndDate;
+        _recurring = entry.Recurring;
+        _interval = entry.Interval;
+        ClearErrors();
+        _operationErrorMessage = null;
+        _formOpen = true;
+    }
+
+    private void CancelEdit()
+    {
+        _formOpen = false;
+        ClearErrors();
+    }
+
+    private void ClearErrors()
+    {
+        _nameError = null;
+        _valueError = null;
+        _startDateError = null;
+        _endDateError = null;
+        _intervalError = null;
+    }
+
+    // Client-side validation mirrors the backend rules: a non-empty name, a non-negative value, a
+    // valid (ordered) date range, and an interval required only when the entry recurs.
+    private bool Validate()
+    {
+        ClearErrors();
+
+        _nameError = string.IsNullOrWhiteSpace(_name) ? NameRequiredMessage : null;
+        _valueError = _value < 0 ? ValueNegativeMessage : null;
+        _startDateError = _startDate is null ? StartDateRequiredMessage : null;
+
+        if (_endDate is null)
+        {
+            _endDateError = EndDateRequiredMessage;
+        }
+        else
+        {
+            _endDateError = _startDate is { } start && _endDate.Value < start
+                ? EndDateBeforeStartMessage
+                : null;
+        }
+
+        _intervalError = _recurring && _interval is null ? IntervalRequiredMessage : null;
+
+        return _nameError is null
+            && _valueError is null
+            && _startDateError is null
+            && _endDateError is null
+            && _intervalError is null;
+    }
+
+    private async Task SaveAsync()
+    {
+        _operationErrorMessage = null;
+
+        if (_household is null || !Validate())
+        {
+            return;
+        }
+
+        _isSaving = true;
+        StateHasChanged();
+
+        try
+        {
+            // A one-off entry never carries a cadence, matching the backend, which stores NULL for a
+            // non-recurring interval.
+            IncomeRequest request = new IncomeRequest(
+                _name!.Trim(),
+                _value,
+                _startDate!.Value,
+                _endDate!.Value,
+                _recurring,
+                _recurring ? _interval : null);
+
+            if (_editingId is { } incomeId)
+            {
+                await ApiClient.PutAsync<IncomeRequest, IncomeEntry>(
+                    IncomePathFor(_household.Id, incomeId),
+                    request);
+            }
+            else
+            {
+                await ApiClient.PostAsync<IncomeRequest, IncomeEntry>(
+                    IncomesPathFor(_household.Id),
+                    request);
+            }
+
+            _formOpen = false;
+            ClearErrors();
+
+            // Reload the list from the source of truth so both the changed entry and the summary
+            // total reflect the save.
+            await LoadAsync();
+        }
+        catch (ClientErrorException exception)
+        {
+            // Every API failure already carries the shared convention message and its significant
+            // identifier (for example "InvalidInput Name" when the backend rejects the input).
+            _operationErrorMessage = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            // Unexpected failures still surface through the shared convention rather than an
+            // unhandled circuit error.
+            _operationErrorMessage = ClientErrorFormatter.Format(ClientErrorCode.Unknown, exception.GetType().Name);
+        }
+        finally
+        {
+            _isSaving = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task DeleteAsync(IncomeEntry entry)
+    {
+        if (_household is null)
+        {
+            return;
+        }
+
+        _operationErrorMessage = null;
+
+        try
+        {
+            await ApiClient.DeleteAsync(IncomePathFor(_household.Id, entry.Id));
+
+            // Reload so the removed entry and the recalculated summary total are both reflected.
+            await LoadAsync();
+        }
+        catch (ClientErrorException exception)
+        {
+            _operationErrorMessage = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            _operationErrorMessage = ClientErrorFormatter.Format(ClientErrorCode.Unknown, exception.GetType().Name);
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+
+        try
+        {
+            // Income is nested under a single household, so this page acts on the household picked
+            // on the household list rather than fetching the list and taking the first entry. The
+            // shared context loads the same endpoint once per circuit, keeping the shell, Dashboard,
+            // and Bills on the same household.
+            await HouseholdContext.EnsureLoadedAsync();
+            _household = HouseholdContext.SelectedHousehold;
+
+            if (_household is null)
+            {
+                _entries = Array.Empty<IncomeEntry>();
+                return;
+            }
+
+            _entries = await ApiClient.GetAsync<IReadOnlyList<IncomeEntry>>(
+                IncomesPathFor(_household.Id));
+        }
+        catch (ClientErrorException exception)
+        {
+            // Every API failure already carries the shared convention message and its significant
+            // identifier (for example "NotFound <id>" when the household is not the user's).
+            _errorMessage = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            // Unexpected failures still surface through the shared convention rather than an
+            // unhandled circuit error or a silent blank page.
+            _errorMessage = ClientErrorFormatter.Format(ClientErrorCode.Unknown, exception.GetType().Name);
+        }
+        finally
+        {
+            // Recompute from the rows that are now loaded; a failed load shows the error branch
+            // instead of the summary, so stale figures are never displayed.
+            RecalculateTotals();
+            _isLoading = false;
+        }
+    }
+
+    /// <summary>
+    /// Request body for creating or updating an income entry. The field names match the backend
+    /// <c>IncomeRequest</c>; the entry is attributed to the current user server-side, so no user or
+    /// household id is sent.
+    /// </summary>
+    private sealed record IncomeRequest(
+        string Name,
+        double Value,
+        DateTime StartDate,
+        DateTime EndDate,
+        bool Recurring,
+        Interval? Interval);
+}

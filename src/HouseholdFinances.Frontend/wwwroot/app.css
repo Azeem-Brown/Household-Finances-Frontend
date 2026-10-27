@@ -1,0 +1,62 @@
+html, body {
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+}
+
+/* Sitewide consistent page-header hierarchy applied through the shared PageHeader component.
+   The green palette itself lives in ThemeService so light and dark modes stay in sync; only
+   presentation is defined here. */
+.page-header {
+    border-bottom: 1px solid var(--mud-palette-lines-default);
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+}
+
+.page-header .mud-typography-h4 {
+    font-size: clamp(1.75rem, 4vw, 2.125rem);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+    margin-bottom: 0;
+}
+
+.page-header .page-header-subtitle {
+    margin-bottom: 0;
+}
+
+/* Keep long content from forcing horizontal overflow on narrow viewports. */
+.mud-main-content {
+    min-width: 0;
+}
+
+/* Keep keyboard focus visible on links and controls. */
+a:focus-visible,
+button:focus-visible,
+.mud-nav-link:focus-visible {
+    outline: 2px solid var(--mud-palette-primary);
+    outline-offset: 2px;
+}
+
+h1:focus {
+    outline: none;
+}
+
+.valid.modified:not([type=checkbox]) {
+    outline: 1px solid #26b050;
+}
+
+.invalid {
+    outline: 1px solid #e50000;
+}
+
+.validation-message {
+    color: #e50000;
+}
+.household-logo-preview {
+    max-width: 96px;
+    max-height: 96px;
+    object-fit: contain;
+}
+

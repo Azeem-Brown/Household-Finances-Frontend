@@ -1,0 +1,428 @@
+@page "/households"
+@inject HouseholdContextService HouseholdContext
+@inject IApiClient ApiClient
+@inject NavigationManager Navigation
+
+<PageTitle>Choose a household | Household Finances</PageTitle>
+
+<PageHeader Title="Choose a household" Subtitle="Pick the household you want to work in." />
+
+<MudPaper Class="pa-6 mb-4" Elevation="1" Style="max-width: 34rem;">
+    <MudText Typo="Typo.h6" GutterBottom="true">Create a household</MudText>
+    <MudText Typo="Typo.body2" Class="mb-4 mud-text-secondary">
+        You become its first member. You can belong to as many households as you like.
+    </MudText>
+
+    @* A real form so Enter submits: the browser submits the form for a keypress in the single text
+       field, and the button is the submit control, so both paths use one handler. *@
+    <form @onsubmit="CreateHouseholdAsync" @onsubmit:preventDefault>
+        <MudTextField @bind-Value="_newHouseholdName"
+                      Label="Household name"
+                      Variant="Variant.Outlined"
+                      Immediate="true"
+                      Error="_newHouseholdNameError is not null"
+                      ErrorText="@_newHouseholdNameError"
+                      data-testid="households-create-name" />
+
+        @if (_isCreating)
+        {
+            <div class="d-flex align-center mt-4" data-testid="households-create-progress">
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Primary" />
+                <MudText Typo="Typo.body2" Class="ml-3">Creating your household...</MudText>
+            </div>
+        }
+
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   Class="mt-4"
+                   ButtonType="ButtonType.Submit"
+                   Disabled="_isCreating"
+                   data-testid="households-create-submit">
+            @CreateSubmitText
+        </MudButton>
+    </form>
+</MudPaper>
+
+@if (_errorMessage is not null)
+{
+    <div data-testid="households-error">
+        <MudAlert Severity="Severity.Error">@_errorMessage</MudAlert>
+    </div>
+}
+
+@if (_isLoading)
+{
+    <MudProgressLinear Indeterminate="true" data-testid="households-loading" />
+}
+else if (HouseholdContext.Households.Count == 0)
+{
+    @* The empty state is guidance for a user who has no household. It is not shown when the list
+       could not be loaded, because then the error above is the explanation. *@
+    @if (_errorMessage is null)
+    {
+        <MudPaper Class="pa-6" Elevation="1" data-testid="households-empty">
+            <MudText Typo="Typo.body1" GutterBottom="true">@EmptyStateMessage</MudText>
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       Href="/setup"
+                       data-testid="households-setup">
+                Go to Setup
+            </MudButton>
+        </MudPaper>
+    }
+}
+else
+{
+    <MudGrid>
+        @for (int position = 0; position < HouseholdContext.Households.Count; position++)
+        {
+            Household household = HouseholdContext.Households[position];
+            string optionTestId = $"household-option-{position}";
+            string logoTestId = $"household-logo-{position}";
+            string placeholderTestId = $"household-placeholder-{position}";
+            string leaveTestId = $"household-leave-{position}";
+            string deleteTestId = $"household-delete-{position}";
+            string confirmTestId = $"household-confirm-{position}";
+            string cancelTestId = $"household-cancel-{position}";
+            string openLabel = $"Open {household.Name}";
+            string? currentValue = IsSelected(household) ? "true" : null;
+
+            <MudItem xs="12" sm="6" md="4">
+                <MudPaper Class="pa-2 h-100" Elevation="1">
+                    <MudButton Variant="Variant.Outlined"
+                               Color="@(IsSelected(household) ? Color.Primary : Color.Default)"
+                               FullWidth="true"
+                               Class="justify-start pa-3"
+                               OnClick="@(() => Choose(household.Id))"
+                               aria-label="@openLabel"
+                               aria-current="@currentValue"
+                               data-testid="@optionTestId">
+                        <MudAvatar Color="Color.Secondary" Size="Size.Medium" Class="mr-3">
+                            @if (GetLogoUrl(household.Id) is { } logoUrl)
+                            {
+                                <img src="@logoUrl" alt="" class="household-picker-logo" data-testid="@logoTestId" />
+                            }
+                            else
+                            {
+                                <MudIcon Icon="@Icons.Material.Filled.Home" data-testid="@placeholderTestId" />
+                            }
+                        </MudAvatar>
+                        <div class="d-flex flex-column align-start">
+                            <MudText Typo="Typo.subtitle1">@household.Name</MudText>
+                            @if (IsSelected(household))
+                            {
+                                <MudText Typo="Typo.caption">Current household</MudText>
+                            }
+                        </div>
+                    </MudButton>
+
+                    @* Confirmation happens in place rather than in a modal, so the household being
+                       acted on stays visible while the user decides. *@
+                    <div class="d-flex align-center justify-end flex-wrap gap-2 px-2 pb-1">
+                        @if (IsPending(household.Id, HouseholdActionKind.Leave))
+                        {
+                            <MudText Typo="Typo.caption" Class="mr-auto">@LeaveConfirmationMessage</MudText>
+                            <MudButton Size="Size.Small"
+                                       Variant="Variant.Filled"
+                                       Color="Color.Warning"
+                                       Disabled="_isBusy"
+                                       OnClick="ConfirmAsync"
+                                       data-testid="@confirmTestId">
+                                Confirm leave
+                            </MudButton>
+                            <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="CancelPending" data-testid="@cancelTestId">
+                                Cancel
+                            </MudButton>
+                        }
+                        else if (IsPending(household.Id, HouseholdActionKind.Delete))
+                        {
+                            <MudText Typo="Typo.caption" Class="mr-auto">@DeleteConfirmationMessage</MudText>
+                            <MudButton Size="Size.Small"
+                                       Variant="Variant.Filled"
+                                       Color="Color.Error"
+                                       Disabled="_isBusy"
+                                       OnClick="ConfirmAsync"
+                                       data-testid="@confirmTestId">
+                                Confirm delete
+                            </MudButton>
+                            <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="CancelPending" data-testid="@cancelTestId">
+                                Cancel
+                            </MudButton>
+                        }
+                        else
+                        {
+                            <MudButton Size="Size.Small"
+                                       Variant="Variant.Text"
+                                       Disabled="_isBusy"
+                                       OnClick="@(() => Begin(household.Id, HouseholdActionKind.Leave))"
+                                       data-testid="@leaveTestId">
+                                Leave
+                            </MudButton>
+
+                            @if (CanDelete(household))
+                            {
+                                <MudButton Size="Size.Small"
+                                           Variant="Variant.Text"
+                                           Color="Color.Error"
+                                           Disabled="_isBusy"
+                                           OnClick="@(() => Begin(household.Id, HouseholdActionKind.Delete))"
+                                           data-testid="@deleteTestId">
+                                    Delete
+                                </MudButton>
+                            }
+                        }
+                    </div>
+                </MudPaper>
+            </MudItem>
+        }
+    </MudGrid>
+}
+
+@code {
+    /// <summary>Guidance shown when the current user is not a member of any household.</summary>
+    public const string EmptyStateMessage =
+        "You are not a member of a household yet. Create one from Setup to get started.";
+
+    /// <summary>Message shown when the picked household is no longer in the loaded list.</summary>
+    public const string StaleHouseholdMessage =
+        "That household is no longer available. Reload the list and try again.";
+
+    /// <summary>Client-side message shown when the name for a new household is empty.</summary>
+    public const string CreateNameRequiredMessage = "Enter a household name.";
+
+    /// <summary>Confirmation text shown before leaving a household.</summary>
+    public const string LeaveConfirmationMessage = "Leave this household?";
+
+    /// <summary>Confirmation text shown before deleting a household.</summary>
+    public const string DeleteConfirmationMessage = "Delete this household permanently?";
+
+    private readonly Dictionary<Guid, string?> _logoUrls = new();
+
+    private bool _isLoading = true;
+    private string? _errorMessage;
+    private string? _newHouseholdName;
+    private string? _newHouseholdNameError;
+    private bool _isCreating;
+    private bool _isBusy;
+    private (Guid HouseholdId, HouseholdActionKind Kind)? _pending;
+
+    private string CreateSubmitText => _isCreating ? "Creating..." : "Create household";
+
+    /// <summary>Builds the leave endpoint for a household.</summary>
+    /// <param name="householdId">The household to leave.</param>
+    /// <returns>The API path for the membership that is removed.</returns>
+    public static string MembershipPathFor(Guid householdId) => $"/api/v1/households/{householdId}/membership";
+
+    /// <summary>Builds the delete endpoint for a household.</summary>
+    /// <param name="householdId">The household to delete.</param>
+    /// <returns>The API path for the household itself.</returns>
+    public static string HouseholdPathFor(Guid householdId) => $"/api/v1/households/{householdId}";
+
+    /// <summary>
+    /// Whether deletion can be offered. The API only allows the creator, and only while they are the
+    /// household's sole member, so another member's data can never be removed without their choice.
+    /// A response without the member count is treated as unavailable rather than assumed safe.
+    /// </summary>
+    /// <param name="household">The household to judge.</param>
+    /// <returns><c>true</c> when the delete action should be shown.</returns>
+    public static bool CanDelete(Household household) =>
+        household.IsCreator && household.MemberCount == 1;
+
+    /// <summary>
+    /// Builds the logo endpoint for a household. The logo is fetched per household so each entry can
+    /// show its own image; the endpoint is the same one the shell and the branding page use.
+    /// </summary>
+    /// <param name="householdId">The household whose logo should be requested.</param>
+    /// <returns>The API path for that household's logo.</returns>
+    public static string LogoPathFor(Guid householdId) => $"/api/v1/households/{householdId}/logo";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+
+        try
+        {
+            await HouseholdContext.EnsureLoadedAsync();
+            await LoadLogosAsync();
+        }
+        catch (ClientErrorException exception)
+        {
+            // Every API failure already carries the shared convention message and its significant
+            // identifier (for example "Unauthorized 7").
+            _errorMessage = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            // Unexpected failures still surface through the shared convention rather than an
+            // unhandled circuit error or a silent blank page.
+            _errorMessage = ClientErrorFormatter.Format(ClientErrorCode.Unknown, exception.GetType().Name);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    // Logos are decorative: a household whose logo cannot be loaded keeps the placeholder icon and
+    // must never stop the list from rendering.
+    private async Task LoadLogosAsync()
+    {
+        foreach (Household household in HouseholdContext.Households)
+        {
+            if (_logoUrls.ContainsKey(household.Id))
+            {
+                continue;
+            }
+
+            string? logoUrl = null;
+
+            try
+            {
+                FileContent? logo = await ApiClient.GetFileAsync(LogoPathFor(household.Id));
+
+                if (logo is not null)
+                {
+                    logoUrl = $"data:{logo.ContentType};base64,{Convert.ToBase64String(logo.Content)}";
+                }
+            }
+            catch (Exception)
+            {
+                logoUrl = null;
+            }
+
+            _logoUrls[household.Id] = logoUrl;
+        }
+    }
+
+    private string? GetLogoUrl(Guid householdId) =>
+        _logoUrls.TryGetValue(householdId, out string? logoUrl) ? logoUrl : null;
+
+    private bool IsSelected(Household household) => HouseholdContext.SelectedHousehold?.Id == household.Id;
+
+    private bool IsPending(Guid householdId, HouseholdActionKind kind) =>
+        _pending is { } pending && pending.HouseholdId == householdId && pending.Kind == kind;
+
+    private void Begin(Guid householdId, HouseholdActionKind kind)
+    {
+        _errorMessage = null;
+        _pending = (householdId, kind);
+    }
+
+    private void CancelPending() => _pending = null;
+
+    // Creating from the list keeps the user where they can see the result: the new household is
+    // selected and marked current rather than jumping to its dashboard.
+    private async Task CreateHouseholdAsync()
+    {
+        _errorMessage = null;
+        _newHouseholdNameError = string.IsNullOrWhiteSpace(_newHouseholdName)
+            ? CreateNameRequiredMessage
+            : null;
+
+        if (_newHouseholdNameError is not null)
+        {
+            return;
+        }
+
+        _isCreating = true;
+
+        try
+        {
+            Household? created = await ApiClient.PostAsync<CreateHouseholdRequest, Household>(
+                HouseholdContextService.HouseholdsPath,
+                new CreateHouseholdRequest(_newHouseholdName!.Trim()));
+
+            await HouseholdContext.RefreshAsync();
+
+            if (created is not null)
+            {
+                HouseholdContext.Select(created.Id);
+            }
+
+            await LoadLogosAsync();
+            _newHouseholdName = string.Empty;
+        }
+        catch (ClientErrorException exception)
+        {
+            // The API's message already names the failure (for example "Conflict household").
+            _errorMessage = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = ClientErrorFormatter.Format(ClientErrorCode.Unknown, exception.GetType().Name);
+        }
+        finally
+        {
+            _isCreating = false;
+        }
+    }
+
+    // Leaving keeps the household for the other members; deleting removes it for everyone and is
+    // only offered to a sole creator. Both refresh the shared list so the shell, Dashboard, and
+    // Income agree immediately, and the selection falls back to another household or to nothing.
+    private async Task ConfirmAsync()
+    {
+        if (_pending is not { } pending)
+        {
+            return;
+        }
+
+        _pending = null;
+        _errorMessage = null;
+        _isBusy = true;
+
+        try
+        {
+            await ApiClient.DeleteAsync(pending.Kind == HouseholdActionKind.Leave
+                ? MembershipPathFor(pending.HouseholdId)
+                : HouseholdPathFor(pending.HouseholdId));
+
+            await HouseholdContext.RefreshAsync();
+        }
+        catch (ClientErrorException exception)
+        {
+            _errorMessage = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            _errorMessage = ClientErrorFormatter.Format(ClientErrorCode.Unknown, exception.GetType().Name);
+        }
+        finally
+        {
+            _isBusy = false;
+        }
+    }
+
+    // The identifier always comes from the list this page rendered, so selection cannot normally be
+    // rejected. It is still guarded so a household that disappears between render and click is
+    // reported instead of throwing out of the click handler.
+    private void Choose(Guid householdId)
+    {
+        try
+        {
+            HouseholdContext.Select(householdId);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            _errorMessage = StaleHouseholdMessage;
+            return;
+        }
+
+        Navigation.NavigateTo("/dashboard");
+    }
+
+    /// <summary>Request body for <c>POST /api/v1/households</c>; only the name is accepted.</summary>
+    /// <param name="Name">The household's name.</param>
+    private sealed record CreateHouseholdRequest(string Name);
+
+    /// <summary>The household actions that need confirmation before they run.</summary>
+    private enum HouseholdActionKind
+    {
+        /// <summary>Remove the current user's membership, keeping the household.</summary>
+        Leave,
+
+        /// <summary>Remove the household and its data, for a sole creator.</summary>
+        Delete
+    }
+}

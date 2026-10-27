@@ -1,0 +1,152 @@
+@page "/setup"
+@using HouseholdFinances.Frontend.Models
+@inject IApiClient ApiClient
+@inject HouseholdContextService HouseholdContext
+@inject NavigationManager Navigation
+
+<PageTitle>Setup | Household Finances</PageTitle>
+
+<PageHeader Title="Setup" Subtitle="Name your household to get started." />
+
+<MudPaper Class="pa-6" Elevation="1" Style="max-width: 30rem;">
+    <MudText Typo="Typo.body1" Class="mb-4">
+        Create a household. You become its first member and reach its dashboard once it exists, and
+        you can create more households and switch between them afterwards.
+    </MudText>
+
+    @* A real form is what makes Enter work: the browser submits the form when Enter is pressed in
+       the only text field, and the button is the submit control, so both paths run one handler. *@
+    <form @onsubmit="CreateHouseholdAsync" @onsubmit:preventDefault>
+        <MudTextField @bind-Value="_name"
+                      @bind-Value:after="OnNameChanged"
+                      Label="Household name"
+                      Variant="Variant.Outlined"
+                      Immediate="true"
+                      Error="_nameError is not null"
+                      ErrorText="@_nameError"
+                      data-testid="setup-name" />
+
+        @if (_isSubmitting)
+        {
+            <div class="d-flex align-center mt-4" data-testid="setup-progress">
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Primary" />
+                <MudText Typo="Typo.body2" Class="ml-3">Creating your household...</MudText>
+            </div>
+        }
+
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   Class="mt-4"
+                   ButtonType="ButtonType.Submit"
+                   Disabled="_isSubmitting"
+                   data-testid="setup-submit">
+            @SubmitText
+        </MudButton>
+    </form>
+
+    @if (_errorMessage is not null)
+    {
+        <div data-testid="setup-error">
+            <MudAlert Severity="Severity.Error" Class="mt-4">@_errorMessage</MudAlert>
+        </div>
+    }
+</MudPaper>
+
+@code {
+    /// <summary>The authenticated endpoint that creates a household and the caller's membership.</summary>
+    public const string HouseholdsPath = "/api/v1/households";
+
+    /// <summary>The route reached once the household exists.</summary>
+    public const string DashboardPath = "/dashboard";
+
+    /// <summary>Client-side message shown when the name is empty or whitespace only.</summary>
+    public const string NameRequiredMessage = "Enter a household name.";
+
+    private string? _name;
+    private string? _nameError;
+    private bool _isSubmitting;
+    private string? _errorMessage;
+
+    // The button says what is happening, so a slow request is visible rather than looking like a
+    // click that did nothing.
+    private string SubmitText => _isSubmitting ? "Creating..." : "Create household";
+
+    // Client-side validation mirrors the backend rule: a name must contain at least one
+    // non-whitespace character. The backend enforces no maximum length, so none is imposed here.
+    private static string? ValidateName(string? name) =>
+        string.IsNullOrWhiteSpace(name) ? NameRequiredMessage : null;
+
+    private void OnNameChanged()
+    {
+        // Clear a stale validation message as soon as the name becomes valid.
+        if (_nameError is not null && ValidateName(_name) is null)
+        {
+            _nameError = null;
+        }
+    }
+
+    private async Task CreateHouseholdAsync()
+    {
+        // A browser submits the form for a click on the submit button and for Enter, so both paths
+        // arrive here. The guard makes a repeated submit event a no-op rather than a duplicate
+        // household.
+        if (_isSubmitting)
+        {
+            return;
+        }
+
+        _errorMessage = null;
+
+        // Reject an empty or whitespace-only name before any request is sent; the field shows the
+        // message and the handler stops without touching the API.
+        _nameError = ValidateName(_name);
+        if (_nameError is not null)
+        {
+            return;
+        }
+
+        _isSubmitting = true;
+        StateHasChanged();
+
+        try
+        {
+            // The backend creates the current user's membership alongside the household, so the
+            // client only sends the name; it never creates a user-household association itself.
+            Household? created = await ApiClient.PostAsync<CreateHouseholdRequest, Household>(
+                HouseholdsPath,
+                new CreateHouseholdRequest(_name!.Trim()));
+
+            // The circuit caches the household list, so it is refreshed and the new household is
+            // selected before navigating. Without this the dashboard would still summarise the
+            // household that happened to sort first, which looked like the create had failed.
+            await HouseholdContext.RefreshAsync();
+
+            if (created is not null)
+            {
+                HouseholdContext.Select(created.Id);
+            }
+
+            Navigation.NavigateTo(DashboardPath);
+        }
+        catch (ClientErrorException exception)
+        {
+            // Every API failure already carries the shared convention message and its significant
+            // identifier (for example "Conflict <id>" when the user already has a household).
+            _errorMessage = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            // Unexpected failures still display through the shared convention rather than an
+            // unhandled circuit error.
+            _errorMessage = ClientErrorFormatter.Format(ClientErrorCode.Unknown, exception.GetType().Name);
+        }
+        finally
+        {
+            _isSubmitting = false;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>Request body for <c>POST /api/v1/households</c>; only the name is accepted.</summary>
+    private sealed record CreateHouseholdRequest(string Name);
+}

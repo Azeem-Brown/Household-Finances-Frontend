@@ -18,7 +18,6 @@
 		Income Page (8hrs)
 		Bill Page (8hrs)
 		Profile Page (6hrs)
-		Reset Password Page (6hrs)
 		
 	Backend:
 		User (Entity) (Service) (Repository) (Controller) (10hr)
@@ -32,8 +31,11 @@ Users
 Id - UID
 Name - String
 Email - String
-Password - HashString
+GoogleSubject - String
 ```
+
+No password is stored: credentials are owned by the third-party identity provider (Google), so
+there is no password column and no password reset.
 
 Household
 ```

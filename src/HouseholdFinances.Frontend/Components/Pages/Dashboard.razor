@@ -1,0 +1,605 @@
+@page "/dashboard"
+@using System.Globalization
+@using HouseholdFinances.Frontend.Models
+@inject IApiClient ApiClient
+@inject TimeProvider Clock
+@inject PeriodSelectionService PeriodSelection
+@inject HouseholdContextService HouseholdContext
+
+<PageTitle>Household Dashboard | Household Finances</PageTitle>
+
+<PageHeader Title="Household Dashboard" Subtitle="An overview of your household finances." />
+
+@if (_errorMessage is not null)
+{
+    <div data-testid="dashboard-error">
+        <MudAlert Severity="Severity.Error">@_errorMessage</MudAlert>
+    </div>
+}
+else if (_isLoading)
+{
+    <MudProgressLinear Indeterminate="true" data-testid="dashboard-loading" />
+}
+else if (_household is null)
+{
+    <MudPaper Class="pa-6" Elevation="1" data-testid="dashboard-no-household">
+        <MudText Typo="Typo.body1">@NoHouseholdMessage</MudText>
+    </MudPaper>
+}
+else
+{
+    <div class="d-flex align-center flex-wrap gap-4 mb-4">
+        <MudAvatar Color="Color.Secondary" Size="Size.Medium">
+            @if (_logoDataUrl is not null)
+            {
+                <img src="@_logoDataUrl" alt="Household logo" class="dashboard-logo-image" data-testid="dashboard-logo" />
+            }
+            else
+            {
+                <MudIcon Icon="@Icons.Material.Filled.Home" data-testid="dashboard-logo-placeholder" />
+            }
+        </MudAvatar>
+
+        <MudText Typo="Typo.subtitle1">@HouseholdName</MudText>
+
+        <MudSelect T="Interval"
+                   Value="SelectedPeriod"
+                   ValueChanged="OnPeriodChanged"
+                   Label="Period"
+                   Variant="Variant.Outlined"
+                   Dense="true"
+                   Style="min-width: 12rem;"
+                   data-testid="dashboard-period">
+            @foreach (Interval interval in Intervals)
+            {
+                <MudSelectItem T="Interval" Value="@interval">@interval</MudSelectItem>
+            }
+        </MudSelect>
+    </div>
+
+    @if (IsEmpty)
+    {
+        <MudPaper Class="pa-6" Elevation="1" data-testid="dashboard-empty">
+            <MudText Typo="Typo.h6" GutterBottom="true">Nothing to summarise yet</MudText>
+            <MudText Typo="Typo.body1">@EmptyStateMessage</MudText>
+        </MudPaper>
+    }
+    else
+    {
+        <MudGrid>
+            <MudItem xs="12" md="4">
+                <MudCard Elevation="1" Class="pa-4 h-100">
+                    <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Total income</MudText>
+                    <MudText Typo="Typo.h5"><span data-testid="dashboard-income">@IncomeText</span></MudText>
+                </MudCard>
+            </MudItem>
+
+            <MudItem xs="12" md="4">
+                <MudCard Elevation="1" Class="pa-4 h-100">
+                    <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Total expenses</MudText>
+                    <MudText Typo="Typo.h5"><span data-testid="dashboard-expenses">@ExpensesText</span></MudText>
+                </MudCard>
+            </MudItem>
+
+            <MudItem xs="12" md="4">
+                <MudCard Elevation="1" Class="pa-4 h-100">
+                    <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Remaining balance</MudText>
+                    <MudText Typo="Typo.h5"><span data-testid="dashboard-balance">@BalanceText</span></MudText>
+                </MudCard>
+            </MudItem>
+        </MudGrid>
+
+        <MudPaper Class="pa-4 mt-4" Elevation="1" data-testid="dashboard-allocation">
+        <MudText Typo="Typo.h6" GutterBottom="true">Split your remaining balance</MudText>
+        <MudText Typo="Typo.body2" Class="mb-4">@AllocationHintMessage</MudText>
+
+        @if (_allocationErrorMessage is not null)
+        {
+            <div data-testid="dashboard-allocation-error">
+                <MudAlert Severity="Severity.Error" Class="mb-4">@_allocationErrorMessage</MudAlert>
+            </div>
+        }
+
+        <MudGrid>
+            <MudItem xs="12" md="6">
+                <MudNumericField T="double"
+                                 @bind-Value="_savings"
+                                 Label="Savings"
+                                 Variant="Variant.Outlined"
+                                 Culture="@CultureInfo.InvariantCulture"
+                                 Error="_savingsError is not null"
+                                 ErrorText="@_savingsError"
+                                 data-testid="dashboard-allocation-savings" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudNumericField T="double"
+                                 @bind-Value="_funMoney"
+                                 Label="Fun money"
+                                 Variant="Variant.Outlined"
+                                 Culture="@CultureInfo.InvariantCulture"
+                                 Error="_funMoneyError is not null"
+                                 ErrorText="@_funMoneyError"
+                                 data-testid="dashboard-allocation-fun" />
+            </MudItem>
+        </MudGrid>
+
+        <div class="d-flex mt-4">
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       OnClick="Allocate"
+                       data-testid="dashboard-allocation-submit">
+                Allocate
+            </MudButton>
+        </div>
+
+        @if (_allocation is { } allocation)
+        {
+            <div data-testid="dashboard-allocation-result">
+                <MudGrid Class="mt-4">
+                    <MudItem xs="12" md="4">
+                        <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Allocated to savings</MudText>
+                        <MudText Typo="Typo.h6"><span data-testid="dashboard-allocation-savings-value">@MoneyFormatter.Format(allocation.Savings)</span></MudText>
+                    </MudItem>
+                    <MudItem xs="12" md="4">
+                        <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Allocated to fun money</MudText>
+                        <MudText Typo="Typo.h6"><span data-testid="dashboard-allocation-fun-value">@MoneyFormatter.Format(allocation.FunMoney)</span></MudText>
+                    </MudItem>
+                    <MudItem xs="12" md="4">
+                        <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Unallocated remainder</MudText>
+                        <MudText Typo="Typo.h6"><span data-testid="dashboard-allocation-remainder">@UnallocatedText</span></MudText>
+                    </MudItem>
+                </MudGrid>
+            </div>
+        }
+        </MudPaper>
+    }
+
+    @if (_goalErrorMessage is not null)
+    {
+        <MudPaper Class="pa-4 mt-4" Elevation="1" data-testid="dashboard-goal">
+            <MudText Typo="Typo.h6" GutterBottom="true">Savings goal</MudText>
+            <div data-testid="dashboard-goal-error">
+                <MudAlert Severity="Severity.Error">@_goalErrorMessage</MudAlert>
+            </div>
+        </MudPaper>
+    }
+    else if (_goal is { } goal)
+    {
+        <MudPaper Class="pa-4 mt-4" Elevation="1" data-testid="dashboard-goal">
+            <MudText Typo="Typo.h6" GutterBottom="true" data-testid="dashboard-goal-name">@goal.Name</MudText>
+            <MudText Typo="Typo.body2" Class="mb-4">@GoalHintMessage</MudText>
+
+            <MudGrid>
+                <MudItem xs="12" md="4">
+                    <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Goal target</MudText>
+                    <MudText Typo="Typo.h6"><span data-testid="dashboard-goal-target">@GoalTargetText</span></MudText>
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Current saved total</MudText>
+                    <MudText Typo="Typo.h6"><span data-testid="dashboard-goal-total">@GoalTotalText</span></MudText>
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Shortfall</MudText>
+                    <MudText Typo="Typo.h6"><span data-testid="dashboard-goal-shortfall">@ShortfallText</span></MudText>
+                </MudItem>
+            </MudGrid>
+
+            <MudNumericField T="double"
+                             @bind-Value="_currentPosition"
+                             Label="Current financial position"
+                             Variant="Variant.Outlined"
+                             Culture="@CultureInfo.InvariantCulture"
+                             Immediate="true"
+                             Error="!IsCurrentPositionValid"
+                             ErrorText="@NegativeAmountMessage"
+                             data-testid="dashboard-goal-position" />
+
+            @if (HasTimeToGoal)
+            {
+                <MudText Typo="Typo.subtitle2" Class="mud-text-secondary mt-4">Time to goal</MudText>
+                <MudText Typo="Typo.h6"><span data-testid="dashboard-goal-time">@TimeToGoalText</span></MudText>
+            }
+
+            @if (GoalMessage.Length > 0)
+            {
+                <div data-testid="dashboard-goal-message" class="mt-4">
+                    <MudAlert Severity="Severity.Info">@GoalMessage</MudAlert>
+                </div>
+            }
+        </MudPaper>
+    }
+}
+
+@code {
+    /// <summary>The authenticated endpoint that lists the current user's households with their totals.</summary>
+    public const string HouseholdsPath = "/api/v1/households";
+
+    /// <summary>
+    /// Builds the household list endpoint for a calendar period. The period is sent as the
+    /// <see cref="Interval"/> member name (for example <c>BiWeekly</c>), which the API parses, so
+    /// the dashboard sends only the selection and never computes a date window itself.
+    /// </summary>
+    /// <param name="period">The period whose totals should be returned.</param>
+    /// <returns>The API path for the household totals in that period.</returns>
+    public static string HouseholdsPathFor(Interval period) => $"{HouseholdsPath}?period={period}";
+
+    /// <summary>
+    /// Builds the goals endpoint for a household. Goals are nested under their household and are
+    /// not windowed by the selected period, so the path carries no period value.
+    /// </summary>
+    /// <param name="householdId">The household whose goals are listed.</param>
+    /// <returns>The API path for the household's goals.</returns>
+    public static string GoalsPathFor(Guid householdId) =>
+        $"{HouseholdsPath}/{householdId}/goals";
+
+    /// <summary>Guidance shown when the household has no income or bill data yet.</summary>
+    public const string EmptyStateMessage =
+        "Add income and bills to see your total income, expenses, and remaining balance.";
+
+    /// <summary>Guidance shown when the current user has no household to summarise.</summary>
+    public const string NoHouseholdMessage =
+        "No household was found for your account. Create one to see your dashboard.";
+
+    /// <summary>Guidance shown above the savings and fun-money allocation inputs.</summary>
+    public const string AllocationHintMessage =
+        "Choose how much of the remaining balance goes to savings and fun money. "
+        + "This split is not saved and resets when you reload or leave the dashboard.";
+
+    /// <summary>Client-side message shown when an allocated amount is negative.</summary>
+    public const string NegativeAmountMessage = "Enter an amount of zero or more.";
+
+    /// <summary>
+    /// Client-side message shown when the savings and fun-money split is larger than the remaining
+    /// balance.
+    /// </summary>
+    public const string AllocationExceedsBalanceMessage =
+        "Savings plus fun money cannot be more than the remaining balance.";
+
+    /// <summary>Guidance shown above the goal's current-position input.</summary>
+    public const string GoalHintMessage =
+        "Enter where you are right now. The time to goal uses the amount you allocated to savings "
+        + "for this period.";
+
+    /// <summary>
+    /// Message shown instead of a time to goal when no positive savings allocation is available,
+    /// so the projection never divides by zero.
+    /// </summary>
+    public const string NoContributionMessage =
+        "Allocate an amount to savings to see how long it will take to reach this goal.";
+
+    /// <summary>Message shown when the current position meets the goal exactly.</summary>
+    public const string GoalReachedMessage = "This goal has already been reached.";
+
+    /// <summary>Message format shown when the current position is above the goal target.</summary>
+    public const string GoalExceededMessageFormat = "This goal has already been reached by {0}.";
+
+    /// <summary>
+    /// The cadence options, in the order fixed by the Interval decision (#4): Daily, Weekly,
+    /// BiWeekly, Monthly, Quarterly, Yearly.
+    /// </summary>
+    public static readonly IReadOnlyList<Interval> Intervals = new[]
+    {
+        Interval.Daily,
+        Interval.Weekly,
+        Interval.BiWeekly,
+        Interval.Monthly,
+        Interval.Quarterly,
+        Interval.Yearly
+    };
+
+    private Household? _household;
+    private bool _isLoading = true;
+    private string? _errorMessage;
+
+    // The household logo shown beside the name. It is decorative: a logo that cannot be loaded
+    // leaves the placeholder icon and never replaces the summary with an error.
+    private string? _logoDataUrl;
+    private Guid? _logoHouseholdId;
+
+    // Goals are loaded once per household because they are not windowed by the selected period.
+    // A single-goal view is shown, chosen deterministically by name, as #17 excludes multi-goal
+    // planning. A goal load failure is kept separate from the page error so the household summary
+    // and allocation stay usable.
+    private Goal? _goal;
+    private Guid? _goalsHouseholdId;
+    private string? _goalErrorMessage;
+    private double _currentPosition;
+
+    // Allocation is session-only page state (see the decision recorded on issue #16): the split is
+    // held in memory here and never sent to the API, so it does not persist and resets when the
+    // page is reloaded or the user navigates away from the dashboard.
+    private double _savings;
+    private double _funMoney;
+    private string? _savingsError;
+    private string? _funMoneyError;
+    private string? _allocationErrorMessage;
+    private (double Savings, double FunMoney)? _allocation;
+
+    // The empty state is shown only when the household has no stored income or bill entries at all,
+    // so a new user is guided to add entries instead of being shown a bare zero. The entry counts
+    // are window-independent, so a household with entries but no occurrences in the selected period
+    // falls through to the summary and shows $0.00 instead of the guidance card. The counts come
+    // from the household response; the page never fetches entries to find out.
+    private bool IsEmpty =>
+        _household is not null &&
+        _household.IncomeEntryCount == 0 &&
+        _household.BillEntryCount == 0;
+
+    private string HouseholdName => _household?.Name ?? string.Empty;
+
+    private string IncomeText => MoneyFormatter.Format(_household?.Incomes ?? 0);
+
+    private string ExpensesText => MoneyFormatter.Format(_household?.Payments ?? 0);
+
+    private string BalanceText => MoneyFormatter.Format(RemainingBalance);
+
+    // The raw remaining balance the allocation is validated against, before any formatting.
+    private double RemainingBalance => (_household?.Incomes ?? 0) - (_household?.Payments ?? 0);
+
+    // What is left of the remaining balance after the accepted split; only meaningful once a split
+    // has been accepted, which is the only time it is shown.
+    private string UnallocatedText =>
+        _allocation is { } allocation
+            ? MoneyFormatter.Format(RemainingBalance - allocation.Savings - allocation.FunMoney)
+            : MoneyFormatter.Format(RemainingBalance);
+
+    private string GoalTargetText => MoneyFormatter.Format(_goal?.Value ?? 0);
+
+    private string GoalTotalText => MoneyFormatter.Format(_goal?.Total ?? 0);
+
+    // The current position is freely editable and defaults to the goal's stored contributed total.
+    // A negative position is rejected by the input error, so no projection is shown for it.
+    private bool IsCurrentPositionValid => _currentPosition >= 0;
+
+    // The monthly contribution is the amount the user allocated to savings for this period. The
+    // accepted split is the only value on the page that represents money set aside for a goal, and
+    // issue #16 deliberately keeps it session-only.
+    private double SavingsContribution => _allocation?.Savings ?? 0;
+
+    private GoalProjectionResult GoalProjection => _goal is { } goal
+        ? GoalProjectionCalculator.Project(goal, _currentPosition, SavingsContribution)
+        : new GoalProjectionResult(0, null);
+
+    private string ShortfallText => MoneyFormatter.Format(GoalProjection.Shortfall);
+
+    private bool HasTimeToGoal => IsCurrentPositionValid && GoalProjection.HasTimeToGoal;
+
+    private string TimeToGoalText => GoalProjection.PeriodsNeeded is { } periods
+        ? DurationFormatter.Format(SelectedPeriod, periods)
+        : string.Empty;
+
+    // The message explains why a time to goal is not shown: the goal is already reached or no
+    // positive savings allocation exists. An invalid current position is already reported by the
+    // input's error text, so it adds no separate message.
+    private string GoalMessage
+    {
+        get
+        {
+            if (_goal is null || !IsCurrentPositionValid)
+            {
+                return string.Empty;
+            }
+
+            GoalProjectionResult projection = GoalProjection;
+
+            if (projection.IsReached)
+            {
+                return projection.Shortfall == 0
+                    ? GoalReachedMessage
+                    : string.Format(
+                        CultureInfo.InvariantCulture,
+                        GoalExceededMessageFormat,
+                        MoneyFormatter.Format(Math.Abs(projection.Shortfall)));
+            }
+
+            return projection.HasTimeToGoal ? string.Empty : NoContributionMessage;
+        }
+    }
+
+    // The period control reads and writes the shared circuit-scoped selection, so the Dashboard,
+    // Income, and Bills always agree on the window. There is no page-local period field.
+    private Interval SelectedPeriod => PeriodSelection.Period;
+
+    // A changed period reloads the household totals from the API, which is the only place the
+    // window is applied. The accepted split and its messages are discarded because they were
+    // validated against the previous balance; the allocation inputs and rules are unchanged.
+    private async Task OnPeriodChanged(Interval period)
+    {
+        if (PeriodSelection.Period == period)
+        {
+            return;
+        }
+
+        PeriodSelection.Period = period;
+        ClearAllocationState();
+
+        await LoadAsync();
+    }
+
+    private void ClearAllocationState()
+    {
+        _allocation = null;
+        _savingsError = null;
+        _funMoneyError = null;
+        _allocationErrorMessage = null;
+    }
+
+    // Client-side validation mirrors the issue's rules: each amount must be non-negative and the
+    // two amounts together must not exceed the remaining balance. Amounts are rounded to the decided
+    // money precision first so validation and display agree on the same value.
+    private void Allocate()
+    {
+        _savingsError = null;
+        _funMoneyError = null;
+        _allocationErrorMessage = null;
+
+        double savings = MoneyFormatter.Round(_savings);
+        double funMoney = MoneyFormatter.Round(_funMoney);
+
+        _savingsError = savings < 0 ? NegativeAmountMessage : null;
+        _funMoneyError = funMoney < 0 ? NegativeAmountMessage : null;
+
+        if (_savingsError is null && _funMoneyError is null && savings + funMoney > RemainingBalance)
+        {
+            _allocationErrorMessage = AllocationExceedsBalanceMessage;
+        }
+
+        // A rejected split clears any previously accepted one, so the page never shows a stale
+        // result next to a fresh error.
+        _allocation = _savingsError is null && _funMoneyError is null && _allocationErrorMessage is null
+            ? (savings, funMoney)
+            : null;
+    }
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    /// <summary>
+    /// Builds the logo endpoint for a household, matching the one the shell and the branding page use.
+    /// </summary>
+    /// <param name="householdId">The household whose logo should be requested.</param>
+    /// <returns>The API path for that household's logo.</returns>
+    public static string LogoPathFor(Guid householdId) => $"/api/v1/households/{householdId}/logo";
+
+    // The logo is fetched once per household and cached, so changing the period does not re-download
+    // the image. A failed request clears the image and keeps the placeholder, because branding is
+    // decorative and must not take the summary down.
+    private async Task LoadLogoAsync(Guid householdId)
+    {
+        if (_logoHouseholdId == householdId)
+        {
+            return;
+        }
+
+        try
+        {
+            FileContent? logo = await ApiClient.GetFileAsync(LogoPathFor(householdId));
+
+            _logoDataUrl = logo is null
+                ? null
+                : $"data:{logo.ContentType};base64,{Convert.ToBase64String(logo.Content)}";
+        }
+        catch (Exception)
+        {
+            _logoDataUrl = null;
+        }
+
+        _logoHouseholdId = householdId;
+    }
+
+    private async Task LoadGoalsAsync(Guid householdId)
+    {
+        _goalErrorMessage = null;
+        _goal = null;
+        _currentPosition = 0;
+
+        try
+        {
+            IReadOnlyList<Goal> goals =
+                await ApiClient.GetAsync<IReadOnlyList<Goal>>(GoalsPathFor(householdId));
+
+            _goal = SelectGoal(goals);
+            _currentPosition = _goal is { } goal ? MoneyFormatter.Round(goal.Total) : 0;
+            _goalsHouseholdId = householdId;
+        }
+        catch (ClientErrorException exception)
+        {
+            // A goal failure uses the shared convention but does not replace the household summary,
+            // so income, expenses, and the allocation remain usable.
+            _goalErrorMessage = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            _goalErrorMessage = ClientErrorFormatter.Format(ClientErrorCode.Unknown, exception.GetType().Name);
+        }
+    }
+
+    // A single goal is shown. Ordering by name and then id makes the choice deterministic even if
+    // the API changes its ordering or two goals share a name.
+    private static Goal? SelectGoal(IReadOnlyList<Goal> goals) =>
+        goals
+            .OrderBy(goal => goal.Name, StringComparer.Ordinal)
+            .ThenBy(goal => goal.Id)
+            .FirstOrDefault();
+
+    private void ClearGoalState()
+    {
+        _goal = null;
+        _goalsHouseholdId = null;
+        _goalErrorMessage = null;
+        _currentPosition = 0;
+    }
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+
+        // The period this request was issued for. A response is applied only if its period is still
+        // the selected one, so a slow earlier response cannot overwrite a newer selection.
+        Interval requestedPeriod = PeriodSelection.Period;
+
+        try
+        {
+            IReadOnlyList<Household> households =
+                await ApiClient.GetAsync<IReadOnlyList<Household>>(HouseholdsPathFor(requestedPeriod));
+
+            if (PeriodSelection.Period != requestedPeriod)
+            {
+                return;
+            }
+
+            // The household picked on the household list wins, so this page agrees with the shell,
+            // Income, and Bills. The period-qualified response is still the source of the totals,
+            // so the choice is applied by identifier rather than by reusing the context's entry.
+            // Before any household is picked the first one by name is used, which keeps a direct
+            // visit to the dashboard predictable.
+            Guid? selectedId = HouseholdContext.SelectedHousehold?.Id;
+            _household = households.FirstOrDefault(household => household.Id == selectedId)
+                ?? households.FirstOrDefault();
+
+            if (_household is null)
+            {
+                ClearGoalState();
+                return;
+            }
+
+            await LoadLogoAsync(_household.Id);
+
+            // Goals are not windowed, so they are fetched once per household rather than on every
+            // period change. The projection itself changes because the period change clears the
+            // accepted savings allocation.
+            if (_goalsHouseholdId != _household.Id)
+            {
+                await LoadGoalsAsync(_household.Id);
+            }
+        }
+        catch (ClientErrorException exception)
+        {
+            // Every API failure already carries the shared convention message and its significant
+            // identifier (for example "Unauthorized 7"). A stale failure is ignored like a stale
+            // response.
+            if (PeriodSelection.Period == requestedPeriod)
+            {
+                _errorMessage = exception.Message;
+            }
+        }
+        catch (Exception exception)
+        {
+            // Unexpected failures still surface through the shared convention rather than an
+            // unhandled circuit error or a silent blank page.
+            if (PeriodSelection.Period == requestedPeriod)
+            {
+                _errorMessage = ClientErrorFormatter.Format(ClientErrorCode.Unknown, exception.GetType().Name);
+            }
+        }
+        finally
+        {
+            // Only the request for the current selection may end the loading state; a newer request
+            // owns it otherwise.
+            if (PeriodSelection.Period == requestedPeriod)
+            {
+                _isLoading = false;
+            }
+        }
+    }
+}

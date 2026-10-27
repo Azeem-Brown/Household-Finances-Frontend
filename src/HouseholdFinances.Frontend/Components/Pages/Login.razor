@@ -1,0 +1,109 @@
+@page "/login"
+@inject IAuthenticationService AuthenticationService
+@inject NavigationManager Navigation
+
+<PageTitle>Login | Household Finances</PageTitle>
+
+<PageHeader Title="Login" Subtitle="Sign in to your household account." />
+
+<MudPaper Class="pa-6" Elevation="1" Style="max-width: 30rem;">
+    <MudText Typo="Typo.body1" Class="mb-4">
+        Continue with your Google account to reach your household.
+    </MudText>
+
+    @* Google's own sign-in button is rendered into this container by the interop module
+       (wwwroot/js/google-identity.js). The element id is the contract between this page and the
+       module; the module completes the browser call when the user clicks the button. *@
+    <div id="google-signin-button" data-testid="signin"></div>
+
+
+    @if (_errorMessage is not null)
+    {
+        <div data-testid="login-error">
+            <MudAlert Severity="Severity.Error" Class="mt-4">@_errorMessage</MudAlert>
+        </div>
+    }
+</MudPaper>
+
+@code {
+    private bool _signInStarted;
+    private string? _errorMessage;
+
+    // A circuit that is already signed in must not be shown the sign-in button again. The check
+    // runs before the Google interop flow starts, and routes to the destination the service
+    // resolves from the existing session (setup when the user has no household yet, otherwise the
+    // household list so the user picks which household to work in before the dashboard).
+    protected override async Task OnInitializedAsync()
+    {
+        AuthenticationDestination? destination = await AuthenticationService.TryResumeAsync();
+
+        if (destination is null)
+        {
+            return;
+        }
+
+        _signInStarted = true;
+        Navigation.NavigateTo(destination == AuthenticationDestination.Setup
+            ? "/setup"
+            : "/households");
+    }
+
+    // Google's sign-in button is rendered into the container above by the interop module, which
+    // completes the browser call when the user clicks it. The container only exists after the first
+    // render, so the sign-in flow is started once here rather than from a click handler on a
+    // page-rendered button.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _signInStarted)
+        {
+            return;
+        }
+
+        _signInStarted = true;
+        await SignInAsync();
+    }
+
+    // Runs the third-party sign-in through the client-side authentication service. The service
+    // decides the post-login destination (setup when the user has no household, the household list
+    // when one exists); this page only routes to it. Failures are shown with the shared client error
+    // convention and never navigate away.
+    //
+    // The call stays pending while the rendered Google button waits for the user to click it, so it
+    // must not drive a progress indicator: an indicator here would spin for as long as the page is
+    // open. The button itself is the affordance.
+    private async Task SignInAsync()
+    {
+        _errorMessage = null;
+
+        try
+        {
+            AuthenticationResult result = await AuthenticationService.SignInAsync();
+
+            if (result.Succeeded)
+            {
+                Navigation.NavigateTo(result.Destination == AuthenticationDestination.Setup
+                    ? "/setup"
+                    : "/households");
+                return;
+            }
+
+            _errorMessage = result.ErrorMessage;
+        }
+        catch (ClientErrorException exception)
+        {
+            _errorMessage = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            // Unexpected failures still display through the shared convention rather than an
+            // unhandled circuit error.
+            _errorMessage = ClientErrorFormatter.Format(ClientErrorCode.Unknown, exception.GetType().Name);
+        }
+        finally
+        {
+            // The failure message is the only thing this page can show afterwards, so the render is
+            // requested once the attempt has finished rather than while it waits on the user.
+            StateHasChanged();
+        }
+    }
+}
