@@ -1,0 +1,181 @@
+@page "/households"
+@inject HouseholdContextService HouseholdContext
+@inject IApiClient ApiClient
+@inject NavigationManager Navigation
+
+<PageTitle>Choose a household | Household Finances</PageTitle>
+
+<PageHeader Title="Choose a household" Subtitle="Pick the household you want to work in." />
+
+@if (_errorMessage is not null)
+{
+    <div data-testid="households-error">
+        <MudAlert Severity="Severity.Error">@_errorMessage</MudAlert>
+    </div>
+}
+else if (_isLoading)
+{
+    <MudProgressLinear Indeterminate="true" data-testid="households-loading" />
+}
+else if (HouseholdContext.Households.Count == 0)
+{
+    <MudPaper Class="pa-6" Elevation="1" data-testid="households-empty">
+        <MudText Typo="Typo.body1" GutterBottom="true">@EmptyStateMessage</MudText>
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   Href="/setup"
+                   data-testid="households-setup">
+            Go to Setup
+        </MudButton>
+    </MudPaper>
+}
+else
+{
+    <MudGrid>
+        @for (int position = 0; position < HouseholdContext.Households.Count; position++)
+        {
+            Household household = HouseholdContext.Households[position];
+            string optionTestId = $"household-option-{position}";
+            string logoTestId = $"household-logo-{position}";
+            string placeholderTestId = $"household-placeholder-{position}";
+            string openLabel = $"Open {household.Name}";
+            string? currentValue = IsSelected(household) ? "true" : null;
+
+            <MudItem xs="12" sm="6" md="4">
+                <MudPaper Class="pa-2 h-100" Elevation="1">
+                    <MudButton Variant="Variant.Outlined"
+                               Color="@(IsSelected(household) ? Color.Primary : Color.Default)"
+                               FullWidth="true"
+                               Class="justify-start pa-3"
+                               OnClick="@(() => Choose(household.Id))"
+                               aria-label="@openLabel"
+                               aria-current="@currentValue"
+                               data-testid="@optionTestId">
+                        <MudAvatar Color="Color.Secondary" Size="Size.Medium" Class="mr-3">
+                            @if (GetLogoUrl(household.Id) is { } logoUrl)
+                            {
+                                <img src="@logoUrl" alt="" class="household-picker-logo" data-testid="@logoTestId" />
+                            }
+                            else
+                            {
+                                <MudIcon Icon="@Icons.Material.Filled.Home" data-testid="@placeholderTestId" />
+                            }
+                        </MudAvatar>
+                        <div class="d-flex flex-column align-start">
+                            <MudText Typo="Typo.subtitle1">@household.Name</MudText>
+                            @if (IsSelected(household))
+                            {
+                                <MudText Typo="Typo.caption">Current household</MudText>
+                            }
+                        </div>
+                    </MudButton>
+                </MudPaper>
+            </MudItem>
+        }
+    </MudGrid>
+}
+
+@code {
+    /// <summary>Guidance shown when the current user is not a member of any household.</summary>
+    public const string EmptyStateMessage =
+        "You are not a member of a household yet. Create one from Setup to get started.";
+
+    /// <summary>Message shown when the picked household is no longer in the loaded list.</summary>
+    public const string StaleHouseholdMessage =
+        "That household is no longer available. Reload the list and try again.";
+
+    private readonly Dictionary<Guid, string?> _logoUrls = new();
+
+    private bool _isLoading = true;
+    private string? _errorMessage;
+
+    /// <summary>
+    /// Builds the logo endpoint for a household. The logo is fetched per household so each entry can
+    /// show its own image; the endpoint is the same one the shell and the branding page use.
+    /// </summary>
+    /// <param name="householdId">The household whose logo should be requested.</param>
+    /// <returns>The API path for that household's logo.</returns>
+    public static string LogoPathFor(Guid householdId) => $"/api/v1/households/{householdId}/logo";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+
+        try
+        {
+            await HouseholdContext.EnsureLoadedAsync();
+            await LoadLogosAsync();
+        }
+        catch (ClientErrorException exception)
+        {
+            // Every API failure already carries the shared convention message and its significant
+            // identifier (for example "Unauthorized 7").
+            _errorMessage = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            // Unexpected failures still surface through the shared convention rather than an
+            // unhandled circuit error or a silent blank page.
+            _errorMessage = ClientErrorFormatter.Format(ClientErrorCode.Unknown, exception.GetType().Name);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    // Logos are decorative: a household whose logo cannot be loaded keeps the placeholder icon and
+    // must never stop the list from rendering.
+    private async Task LoadLogosAsync()
+    {
+        foreach (Household household in HouseholdContext.Households)
+        {
+            if (_logoUrls.ContainsKey(household.Id))
+            {
+                continue;
+            }
+
+            string? logoUrl = null;
+
+            try
+            {
+                FileContent? logo = await ApiClient.GetFileAsync(LogoPathFor(household.Id));
+
+                if (logo is not null)
+                {
+                    logoUrl = $"data:{logo.ContentType};base64,{Convert.ToBase64String(logo.Content)}";
+                }
+            }
+            catch (Exception)
+            {
+                logoUrl = null;
+            }
+
+            _logoUrls[household.Id] = logoUrl;
+        }
+    }
+
+    private string? GetLogoUrl(Guid householdId) =>
+        _logoUrls.TryGetValue(householdId, out string? logoUrl) ? logoUrl : null;
+
+    private bool IsSelected(Household household) => HouseholdContext.SelectedHousehold?.Id == household.Id;
+
+    // The identifier always comes from the list this page rendered, so selection cannot normally be
+    // rejected. It is still guarded so a household that disappears between render and click is
+    // reported instead of throwing out of the click handler.
+    private void Choose(Guid householdId)
+    {
+        try
+        {
+            HouseholdContext.Select(householdId);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            _errorMessage = StaleHouseholdMessage;
+            return;
+        }
+
+        Navigation.NavigateTo("/dashboard");
+    }
+}

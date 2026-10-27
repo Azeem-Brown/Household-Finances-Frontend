@@ -41,6 +41,8 @@ public class BillsPageTests : BunitContext, IAsyncLifetime
         // The scoped service stands in for the circuit's single selection, so both pages rendered
         // in one context share it.
         Services.AddScoped<PeriodSelectionService>(_ => _periodSelection);
+        // Bills act on the household picked on the household list, so the page resolves this.
+        Services.AddScoped<HouseholdContextService>();
     }
 
     // The create/edit form renders MudBlazor inputs that resolve services which only implement

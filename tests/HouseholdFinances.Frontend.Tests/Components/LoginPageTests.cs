@@ -118,7 +118,7 @@ public class LoginPageTests : BunitContext
     }
 
     [Fact]
-    public void SignIn_SuccessWithHousehold_NavigatesToDashboard()
+    public void SignIn_SuccessWithHousehold_NavigatesToTheHouseholdList()
     {
         _authenticationService.Result =
             AuthenticationResult.Success(AuthenticationDestination.Dashboard);
@@ -126,19 +126,19 @@ public class LoginPageTests : BunitContext
         var cut = Render<Login>();
 
         cut.WaitForAssertion(() =>
-            Assert.EndsWith("/dashboard", _navigation.Uri, StringComparison.Ordinal));
+            Assert.EndsWith("/households", _navigation.Uri, StringComparison.Ordinal));
         Assert.Empty(cut.FindAll("[data-testid='login-error']"));
     }
 
     [Fact]
-    public void Login_WithExistingSessionWithHousehold_NavigatesToDashboardWithoutSigningIn()
+    public void Login_WithExistingSessionWithHousehold_NavigatesToTheHouseholdListWithoutSigningIn()
     {
         _authenticationService.ResumeDestination = AuthenticationDestination.Dashboard;
 
         var cut = Render<Login>();
 
         cut.WaitForAssertion(() =>
-            Assert.EndsWith("/dashboard", _navigation.Uri, StringComparison.Ordinal));
+            Assert.EndsWith("/households", _navigation.Uri, StringComparison.Ordinal));
         Assert.Equal(1, _authenticationService.ResumeCallCount);
         Assert.Equal(0, _authenticationService.CallCount);
     }

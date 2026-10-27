@@ -4,6 +4,7 @@
 @inject IApiClient ApiClient
 @inject TimeProvider Clock
 @inject PeriodSelectionService PeriodSelection
+@inject HouseholdContextService HouseholdContext
 
 <PageTitle>Bills | Household Finances</PageTitle>
 
@@ -539,12 +540,12 @@ else
 
         try
         {
-            IReadOnlyList<Household> households = await ApiClient.GetAsync<IReadOnlyList<Household>>(HouseholdsPath);
-
-            // The backend returns the list ordered by name. Bills are nested under a single
-            // household, so this page takes the same first household the dashboard summarises,
-            // keeping the two pages consistent.
-            _household = households.FirstOrDefault();
+            // Bills are nested under a single household, so this page acts on the household picked
+            // on the household list rather than fetching the list and taking the first entry. The
+            // shared context loads the same endpoint once per circuit, keeping the shell, Dashboard,
+            // and Income on the same household.
+            await HouseholdContext.EnsureLoadedAsync();
+            _household = HouseholdContext.SelectedHousehold;
 
             if (_household is null)
             {

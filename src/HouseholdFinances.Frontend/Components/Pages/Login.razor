@@ -39,7 +39,8 @@
 
     // A circuit that is already signed in must not be shown the sign-in button again. The check
     // runs before the Google interop flow starts, and routes to the destination the service
-    // resolves from the existing session (setup when the user has no household yet).
+    // resolves from the existing session (setup when the user has no household yet, otherwise the
+    // household list so the user picks which household to work in before the dashboard).
     protected override async Task OnInitializedAsync()
     {
         AuthenticationDestination? destination = await AuthenticationService.TryResumeAsync();
@@ -52,7 +53,7 @@
         _signInStarted = true;
         Navigation.NavigateTo(destination == AuthenticationDestination.Setup
             ? "/setup"
-            : "/dashboard");
+            : "/households");
     }
 
     // Google's sign-in button is rendered into the container above by the interop module, which
@@ -71,8 +72,8 @@
     }
 
     // Runs the third-party sign-in through the client-side authentication service. The service
-    // decides the post-login destination (setup when the user has no household, dashboard when one
-    // exists); this page only routes to it. Failures are shown with the shared client error
+    // decides the post-login destination (setup when the user has no household, the household list
+    // when one exists); this page only routes to it. Failures are shown with the shared client error
     // convention and never navigate away.
     private async Task SignInAsync()
     {
@@ -88,7 +89,7 @@
             {
                 Navigation.NavigateTo(result.Destination == AuthenticationDestination.Setup
                     ? "/setup"
-                    : "/dashboard");
+                    : "/households");
                 return;
             }
 

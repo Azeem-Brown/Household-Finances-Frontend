@@ -4,6 +4,7 @@
 @inject IApiClient ApiClient
 @inject TimeProvider Clock
 @inject PeriodSelectionService PeriodSelection
+@inject HouseholdContextService HouseholdContext
 
 <PageTitle>Household Dashboard | Household Finances</PageTitle>
 
@@ -28,6 +29,17 @@ else if (_household is null)
 else
 {
     <div class="d-flex align-center flex-wrap gap-4 mb-4">
+        <MudAvatar Color="Color.Secondary" Size="Size.Medium">
+            @if (_logoDataUrl is not null)
+            {
+                <img src="@_logoDataUrl" alt="Household logo" class="dashboard-logo-image" data-testid="dashboard-logo" />
+            }
+            else
+            {
+                <MudIcon Icon="@Icons.Material.Filled.Home" data-testid="dashboard-logo-placeholder" />
+            }
+        </MudAvatar>
+
         <MudText Typo="Typo.subtitle1">@HouseholdName</MudText>
 
         <MudSelect T="Interval"
@@ -279,6 +291,11 @@ else
     private bool _isLoading = true;
     private string? _errorMessage;
 
+    // The household logo shown beside the name. It is decorative: a logo that cannot be loaded
+    // leaves the placeholder icon and never replaces the summary with an error.
+    private string? _logoDataUrl;
+    private Guid? _logoHouseholdId;
+
     // Goals are loaded once per household because they are not windowed by the selected period.
     // A single-goal view is shown, chosen deterministically by name, as #17 excludes multi-goal
     // planning. A goal load failure is kept separate from the page error so the household summary
@@ -436,6 +453,39 @@ else
 
     protected override Task OnInitializedAsync() => LoadAsync();
 
+    /// <summary>
+    /// Builds the logo endpoint for a household, matching the one the shell and the branding page use.
+    /// </summary>
+    /// <param name="householdId">The household whose logo should be requested.</param>
+    /// <returns>The API path for that household's logo.</returns>
+    public static string LogoPathFor(Guid householdId) => $"/api/v1/households/{householdId}/logo";
+
+    // The logo is fetched once per household and cached, so changing the period does not re-download
+    // the image. A failed request clears the image and keeps the placeholder, because branding is
+    // decorative and must not take the summary down.
+    private async Task LoadLogoAsync(Guid householdId)
+    {
+        if (_logoHouseholdId == householdId)
+        {
+            return;
+        }
+
+        try
+        {
+            FileContent? logo = await ApiClient.GetFileAsync(LogoPathFor(householdId));
+
+            _logoDataUrl = logo is null
+                ? null
+                : $"data:{logo.ContentType};base64,{Convert.ToBase64String(logo.Content)}";
+        }
+        catch (Exception)
+        {
+            _logoDataUrl = null;
+        }
+
+        _logoHouseholdId = householdId;
+    }
+
     private async Task LoadGoalsAsync(Guid householdId)
     {
         _goalErrorMessage = null;
@@ -498,15 +548,22 @@ else
                 return;
             }
 
-            // The backend returns the list ordered by name. The dashboard summarises a single
-            // household, so it predicts a stable subject by taking the first one.
-            _household = households.FirstOrDefault();
+            // The household picked on the household list wins, so this page agrees with the shell,
+            // Income, and Bills. The period-qualified response is still the source of the totals,
+            // so the choice is applied by identifier rather than by reusing the context's entry.
+            // Before any household is picked the first one by name is used, which keeps a direct
+            // visit to the dashboard predictable.
+            Guid? selectedId = HouseholdContext.SelectedHousehold?.Id;
+            _household = households.FirstOrDefault(household => household.Id == selectedId)
+                ?? households.FirstOrDefault();
 
             if (_household is null)
             {
                 ClearGoalState();
                 return;
             }
+
+            await LoadLogoAsync(_household.Id);
 
             // Goals are not windowed, so they are fetched once per household rather than on every
             // period change. The projection itself changes because the period change clears the
