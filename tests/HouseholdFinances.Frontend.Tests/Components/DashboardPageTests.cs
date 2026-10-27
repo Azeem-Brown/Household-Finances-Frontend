@@ -38,6 +38,9 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
         // The scoped service stands in for the circuit's single selection, so every page rendered
         // in one context shares it.
         Services.AddScoped<PeriodSelectionService>(_ => _periodSelection);
+        // The household picker and the shell share this service, so the dashboard reads the same
+        // selection they do.
+        Services.AddScoped<HouseholdContextService>();
     }
 
     // The allocation panel renders MudBlazor inputs that resolve services which only implement
@@ -99,20 +102,104 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
     }
 
     [Fact]
-    public void Dashboard_MultipleHouseholds_SummarisesTheFirstOnePredictably()
+    public async Task Dashboard_MultipleHouseholds_UsesTheHouseholdPickedOnTheHouseholdList()
     {
-        var first = HouseholdWithTotals("Alpha", 3000, 1000);
-        var second = HouseholdWithTotals("Beta", 9000, 5000);
+        Household first = HouseholdWithTotals("Alpha", 3000, 1000);
+        Household second = HouseholdWithTotals("Beta", 9000, 5000);
+        _apiClient.GetResponse = new List<Household> { first, second };
+
+        // Stand in for the picker having selected the second household in this circuit.
+        HouseholdContextService householdContext = Services.GetRequiredService<HouseholdContextService>();
+        await householdContext.EnsureLoadedAsync();
+        householdContext.Select(second.Id);
+
+        var cut = Render<Dashboard>();
+
+        cut.WaitForAssertion(() =>
+        {
+            // The picked household's totals win, not the first household in the API response.
+            Assert.Equal("$9,000.00", cut.Find("[data-testid='dashboard-income']").TextContent.Trim());
+            Assert.Equal("$4,000.00", cut.Find("[data-testid='dashboard-balance']").TextContent.Trim());
+        });
+
+        Assert.Contains("Beta", cut.Markup);
+    }
+
+    [Fact]
+    public void Dashboard_MultipleHouseholds_DefaultsToTheFirstWhenNothingIsPicked()
+    {
+        Household first = HouseholdWithTotals("Alpha", 3000, 1000);
+        Household second = HouseholdWithTotals("Beta", 9000, 5000);
         _apiClient.GetResponse = new List<Household> { first, second };
 
         var cut = Render<Dashboard>();
 
         cut.WaitForAssertion(() =>
         {
-            // The first household's totals win, not the second's, so the choice is deterministic.
+            // Reaching the dashboard without a pick is still deterministic: the first household by
+            // name is summarised, which is what the shared selection defaults to as well.
             Assert.Equal("$3,000.00", cut.Find("[data-testid='dashboard-income']").TextContent.Trim());
             Assert.Equal("$2,000.00", cut.Find("[data-testid='dashboard-balance']").TextContent.Trim());
         });
+    }
+
+    [Fact]
+    public void Dashboard_HouseholdWithLogo_RendersTheLogoInTheHeader()
+    {
+        // The logo endpoint is the same one the shell and the household list use.
+        Household household = HouseholdWithTotals("Family", 5000, 1000);
+        _apiClient.GetResponse = new List<Household> { household };
+        _apiClient.FileResponses[Dashboard.LogoPathFor(household.Id)] =
+            new FileContent("image/png", new byte[] { 1, 2, 3 });
+
+        var cut = Render<Dashboard>();
+
+        cut.WaitForAssertion(() =>
+        {
+            var logo = cut.Find("[data-testid='dashboard-logo']");
+            Assert.StartsWith(
+                "data:image/png;base64,",
+                logo.GetAttribute("src"),
+                StringComparison.Ordinal);
+        });
+
+        Assert.Empty(cut.FindAll("[data-testid='dashboard-logo-placeholder']"));
+    }
+
+    [Fact]
+    public void Dashboard_HouseholdWithoutLogo_RendersThePlaceholder()
+    {
+        _apiClient.GetResponse = new List<Household>
+        {
+            HouseholdWithTotals("Family", 5000, 1000)
+        };
+
+        var cut = Render<Dashboard>();
+
+        cut.WaitForAssertion(() =>
+            Assert.NotEmpty(cut.FindAll("[data-testid='dashboard-logo-placeholder']")));
+        Assert.Empty(cut.FindAll("[data-testid='dashboard-logo']"));
+    }
+
+    [Fact]
+    public void Dashboard_LogoFailure_KeepsTheSummaryAndShowsThePlaceholder()
+    {
+        Household household = HouseholdWithTotals("Family", 5000, 1000);
+        _apiClient.GetResponse = new List<Household> { household };
+        _apiClient.ThrowByPath[Dashboard.LogoPathFor(household.Id)] =
+            new ClientErrorException(ClientErrorCode.NotFound, household.Id);
+
+        var cut = Render<Dashboard>();
+
+        cut.WaitForAssertion(() =>
+        {
+            // Branding is decorative, so the summary still renders and only the image is missing.
+            Assert.Equal("$5,000.00", cut.Find("[data-testid='dashboard-income']").TextContent.Trim());
+            Assert.NotEmpty(cut.FindAll("[data-testid='dashboard-logo-placeholder']"));
+        });
+
+        Assert.Empty(cut.FindAll("[data-testid='dashboard-error']"));
+        Assert.Empty(cut.FindAll("[data-testid='dashboard-logo']"));
     }
 
     [Fact]

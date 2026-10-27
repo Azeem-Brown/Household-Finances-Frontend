@@ -35,6 +35,8 @@ public class PeriodSelectionTests : BunitContext, IAsyncLifetime
         Services.AddSingleton<IApiClient>(_apiClient);
         Services.AddSingleton<TimeProvider>(_clock);
         Services.AddScoped<PeriodSelectionService>(_ => _periodSelection);
+        // One context stands in for one circuit, so the household selection is shared too.
+        Services.AddScoped<HouseholdContextService>();
     }
 
     public Task InitializeAsync() => Task.CompletedTask;

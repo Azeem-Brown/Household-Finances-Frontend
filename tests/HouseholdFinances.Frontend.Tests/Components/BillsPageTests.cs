@@ -41,6 +41,8 @@ public class BillsPageTests : BunitContext, IAsyncLifetime
         // The scoped service stands in for the circuit's single selection, so both pages rendered
         // in one context share it.
         Services.AddScoped<PeriodSelectionService>(_ => _periodSelection);
+        // Bills act on the household picked on the household list, so the page resolves this.
+        Services.AddScoped<HouseholdContextService>();
     }
 
     // The create/edit form renders MudBlazor inputs that resolve services which only implement
@@ -800,6 +802,38 @@ public class BillsPageTests : BunitContext, IAsyncLifetime
             interval: Interval.Monthly,
             startDate: new DateTime(2026, 1, 20),
             endDate: new DateTime(2026, 10, 20));
+
+    [Fact]
+    public async Task Bills_UsesTheHouseholdPickedOnTheHouseholdList()
+    {
+        var first = new Household { Id = Guid.NewGuid(), Name = "Alpha" };
+        var second = new Household { Id = Guid.NewGuid(), Name = "Beta" };
+        _apiClient.GetResponsesByPath[BillsPage.HouseholdsPath] = new List<Household> { first, second };
+        _apiClient.GetResponsesByPath[BillsPage.BillsPathFor(first.Id)] =
+            new List<Bill> { SampleBill("Alpha bill", 10.00) };
+        _apiClient.GetResponsesByPath[BillsPage.BillsPathFor(second.Id)] =
+            new List<Bill> { SampleBill("Beta bill", 20.00) };
+
+        // Stand in for the picker having selected the second household in this circuit.
+        HouseholdContextService householdContext = Services.GetRequiredService<HouseholdContextService>();
+        await householdContext.EnsureLoadedAsync();
+        householdContext.Select(second.Id);
+
+        var cut = Render<BillsPage>();
+
+        cut.WaitForAssertion(() =>
+        {
+            var names = cut.FindAll("[data-testid='bills-name']")
+                .Select(cell => cell.TextContent.Trim())
+                .ToList();
+            Assert.Contains("Beta bill", names);
+            Assert.DoesNotContain("Alpha bill", names);
+        });
+
+        // Only the picked household's bills are requested; the first household is never fetched.
+        Assert.Contains(BillsPage.BillsPathFor(second.Id), _apiClient.Gets);
+        Assert.DoesNotContain(BillsPage.BillsPathFor(first.Id), _apiClient.Gets);
+    }
 
     /// <summary>
     /// Registers a single household and its bills as the API responses, so the page's two-step load
