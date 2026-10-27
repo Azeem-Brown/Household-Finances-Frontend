@@ -804,6 +804,38 @@ public class IncomePageTests : BunitContext, IAsyncLifetime
             startDate: new DateTime(2026, 1, 20),
             endDate: new DateTime(2026, 10, 20));
 
+    [Fact]
+    public async Task Income_UsesTheHouseholdPickedOnTheHouseholdList()
+    {
+        var first = new Household { Id = Guid.NewGuid(), Name = "Alpha" };
+        var second = new Household { Id = Guid.NewGuid(), Name = "Beta" };
+        _apiClient.GetResponsesByPath[IncomePage.HouseholdsPath] = new List<Household> { first, second };
+        _apiClient.GetResponsesByPath[IncomePage.IncomesPathFor(first.Id)] =
+            new List<Income> { SampleIncome("Alpha income", 10.00) };
+        _apiClient.GetResponsesByPath[IncomePage.IncomesPathFor(second.Id)] =
+            new List<Income> { SampleIncome("Beta income", 20.00) };
+
+        // Stand in for the picker having selected the second household in this circuit.
+        HouseholdContextService householdContext = Services.GetRequiredService<HouseholdContextService>();
+        await householdContext.EnsureLoadedAsync();
+        householdContext.Select(second.Id);
+
+        var cut = Render<IncomePage>();
+
+        cut.WaitForAssertion(() =>
+        {
+            var names = cut.FindAll("[data-testid='income-name']")
+                .Select(cell => cell.TextContent.Trim())
+                .ToList();
+            Assert.Contains("Beta income", names);
+            Assert.DoesNotContain("Alpha income", names);
+        });
+
+        // Only the picked household's entries are requested; the first household is never fetched.
+        Assert.Contains(IncomePage.IncomesPathFor(second.Id), _apiClient.Gets);
+        Assert.DoesNotContain(IncomePage.IncomesPathFor(first.Id), _apiClient.Gets);
+    }
+
     /// <summary>
     /// Registers a single household and its income entries as the API responses, so the page's
     /// two-step load has a deterministic result.
