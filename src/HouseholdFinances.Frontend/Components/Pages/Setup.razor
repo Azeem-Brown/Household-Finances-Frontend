@@ -39,7 +39,6 @@
                    Class="mt-4"
                    ButtonType="ButtonType.Submit"
                    Disabled="_isSubmitting"
-                   OnClick="CreateHouseholdAsync"
                    data-testid="setup-submit">
             @SubmitText
         </MudButton>
@@ -88,9 +87,9 @@
 
     private async Task CreateHouseholdAsync()
     {
-        // The button both submits the form and handles the click, because a browser submits a form
-        // for a click on a submit button while Blazor also dispatches the click. The guard makes the
-        // second of those two paths a no-op rather than a duplicate household.
+        // A browser submits the form for a click on the submit button and for Enter, so both paths
+        // arrive here. The guard makes a repeated submit event a no-op rather than a duplicate
+        // household.
         if (_isSubmitting)
         {
             return;

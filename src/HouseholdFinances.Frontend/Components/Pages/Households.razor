@@ -49,21 +49,27 @@
         <MudAlert Severity="Severity.Error">@_errorMessage</MudAlert>
     </div>
 }
-else if (_isLoading)
+
+@if (_isLoading)
 {
     <MudProgressLinear Indeterminate="true" data-testid="households-loading" />
 }
 else if (HouseholdContext.Households.Count == 0)
 {
-    <MudPaper Class="pa-6" Elevation="1" data-testid="households-empty">
-        <MudText Typo="Typo.body1" GutterBottom="true">@EmptyStateMessage</MudText>
-        <MudButton Variant="Variant.Filled"
-                   Color="Color.Primary"
-                   Href="/setup"
-                   data-testid="households-setup">
-            Go to Setup
-        </MudButton>
-    </MudPaper>
+    @* The empty state is guidance for a user who has no household. It is not shown when the list
+       could not be loaded, because then the error above is the explanation. *@
+    @if (_errorMessage is null)
+    {
+        <MudPaper Class="pa-6" Elevation="1" data-testid="households-empty">
+            <MudText Typo="Typo.body1" GutterBottom="true">@EmptyStateMessage</MudText>
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       Href="/setup"
+                       data-testid="households-setup">
+                Go to Setup
+            </MudButton>
+        </MudPaper>
+    }
 }
 else
 {

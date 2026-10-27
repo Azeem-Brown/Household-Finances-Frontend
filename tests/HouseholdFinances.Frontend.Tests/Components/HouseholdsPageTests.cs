@@ -225,7 +225,7 @@ public class HouseholdsPageTests : BunitContext
 
         cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-testid='household-option-1']")));
 
-        cut.Find("[data-testid='households-create-name'] input").Input("Blue Household");
+        cut.Find("[data-testid='households-create-name']").Input("Blue Household");
 
         // The list the API returns once the household exists.
         ArrangeList(
