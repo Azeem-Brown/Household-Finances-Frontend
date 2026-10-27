@@ -120,7 +120,7 @@ public class HouseholdsPageTests : BunitContext
 
         cut.WaitForAssertion(() =>
         {
-            IElement logo = cut.Find("[data-testid='household-logo-1']");
+            var logo = cut.Find("[data-testid='household-logo-1']");
             Assert.StartsWith("data:image/webp;base64,", logo.GetAttribute("src"), StringComparison.Ordinal);
         });
 

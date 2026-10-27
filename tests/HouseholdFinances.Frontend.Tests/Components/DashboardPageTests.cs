@@ -156,7 +156,7 @@ public class DashboardPageTests : BunitContext, IAsyncLifetime
 
         cut.WaitForAssertion(() =>
         {
-            IElement logo = cut.Find("[data-testid='dashboard-logo']");
+            var logo = cut.Find("[data-testid='dashboard-logo']");
             Assert.StartsWith(
                 "data:image/png;base64,",
                 logo.GetAttribute("src"),
