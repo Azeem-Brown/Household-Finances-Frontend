@@ -4,6 +4,7 @@ using HouseholdFinances.Frontend.Components.Pages;
 using HouseholdFinances.Frontend.Services;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
+using MudBlazor;
 using MudBlazor.Services;
 
 namespace HouseholdFinances.Frontend.Tests.Components;
@@ -54,6 +55,18 @@ public class LoginPageTests : BunitContext
 
         // The flow must be in flight so the rendered button can start sign-in when clicked.
         cut.WaitForAssertion(() => Assert.Equal(1, _authenticationService.CallCount));
+    }
+
+    [Fact]
+    public void Login_ShowsNoProgressIndicatorWhileItWaitsForTheButton()
+    {
+        var cut = Render<Login>();
+
+        // The sign-in call stays pending until the user clicks Google's button, so an indicator tied
+        // to it would spin for as long as the page is open.
+        cut.WaitForAssertion(() => Assert.Equal(1, _authenticationService.CallCount));
+        Assert.Empty(cut.FindComponents<MudProgressCircular>());
+        Assert.Empty(cut.FindAll("[data-testid='signin-progress']"));
     }
 
     [Fact]
