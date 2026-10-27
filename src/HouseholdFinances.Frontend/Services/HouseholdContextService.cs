@@ -96,4 +96,18 @@ public sealed class HouseholdContextService
         SelectedHousehold = household;
         Changed?.Invoke();
     }
+
+    /// <summary>
+    /// Forgets the loaded households and the selection. Signing out calls this so a later sign-in in
+    /// the same circuit cannot show the previous user's households, and the next
+    /// <see cref="EnsureLoadedAsync"/> call loads the new user's list.
+    /// </summary>
+    public void Reset()
+    {
+        Households = Array.Empty<Household>();
+        SelectedHousehold = null;
+        IsLoaded = false;
+
+        Changed?.Invoke();
+    }
 }

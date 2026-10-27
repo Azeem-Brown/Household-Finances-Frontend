@@ -57,6 +57,7 @@ builder.Services.AddScoped<ITokenStore, PersistentTokenStore>();
 builder.Services.AddScoped<ThemeService>();
 builder.Services.AddScoped<PeriodSelectionService>();
 builder.Services.AddScoped<HouseholdContextService>();
+builder.Services.AddScoped<PageAccessService>();
 
 // The only time source the pages use, so "now" is explicit and pinnable in tests. Its UTC clock
 // matches the assumption that windows are calendar dates in UTC.

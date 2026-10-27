@@ -1,6 +1,7 @@
 using Bunit;
 using Bunit.TestDoubles;
 using HouseholdFinances.Frontend.Components.Layout;
+using HouseholdFinances.Frontend.Models;
 using HouseholdFinances.Frontend.Services;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
@@ -20,6 +21,7 @@ public class MainLayoutShellTests : BunitContext, IAsyncLifetime
     private readonly ThemeService _themeService = new();
     private readonly StubAuthenticationService _authenticationService = new();
     private readonly StubApiClient _apiClient = new();
+    private readonly BunitNavigationManager _navigation;
 
     public MainLayoutShellTests()
     {
@@ -30,6 +32,9 @@ public class MainLayoutShellTests : BunitContext, IAsyncLifetime
         Services.AddSingleton<IAuthenticationService>(_authenticationService);
         Services.AddSingleton<IApiClient>(_apiClient);
         Services.AddScoped<HouseholdContextService>();
+        Services.AddScoped<PageAccessService>();
+
+        _navigation = (BunitNavigationManager)Services.GetRequiredService<NavigationManager>();
     }
 
     // Rendering the shell resolves MudBlazor services that only implement IAsyncDisposable, so the
@@ -53,20 +58,161 @@ public class MainLayoutShellTests : BunitContext, IAsyncLifetime
     }
 
     [Fact]
-    public void MainLayout_RendersTheSharedNavigationForEveryPage()
+    public void MainLayout_SignedOut_OffersOnlyLogin()
     {
+        _authenticationService.HasSession = false;
+
         var cut = Render<MainLayout>();
 
-        Assert.Contains("Household Finances", cut.Markup);
+        cut.WaitForAssertion(() => Assert.Contains("Login", cut.Markup));
+        Assert.DoesNotContain("Setup", cut.Markup);
+        Assert.DoesNotContain("Household Dashboard", cut.Markup);
+        Assert.DoesNotContain("Income", cut.Markup);
+        Assert.DoesNotContain("Bills", cut.Markup);
+    }
 
-        foreach (var label in new[]
+    [Fact]
+    public void MainLayout_SignedInWithoutHousehold_OffersSetupAndProfileOnly()
+    {
+        _authenticationService.HasSession = true;
+        _apiClient.GetResponse = new List<Household>();
+
+        var cut = Render<MainLayout>();
+
+        cut.WaitForAssertion(() => Assert.Contains("Setup", cut.Markup));
+        Assert.Contains("Profile", cut.Markup);
+        Assert.DoesNotContain("Login", cut.Markup);
+        Assert.DoesNotContain("Household Dashboard", cut.Markup);
+        Assert.DoesNotContain("Switch household", cut.Markup);
+    }
+
+    [Fact]
+    public void MainLayout_SignedInWithHousehold_OffersEverythingExceptLoginAndSetup()
+    {
+        _authenticationService.HasSession = true;
+        _apiClient.GetResponse = new List<Household>
+        {
+            new Household { Id = Guid.NewGuid(), Name = "Family" }
+        };
+
+        var cut = Render<MainLayout>();
+
+        cut.WaitForAssertion(() => Assert.Contains("Household Dashboard", cut.Markup));
+
+        foreach (string label in new[]
                  {
-                     "Home", "Login", "Setup", "Household Dashboard",
-                     "Income", "Bills", "Profile", "Reset Password"
+                     "Home", "Household Dashboard", "Switch household", "Income",
+                     "Bills", "Profile", "Household Branding", "Reset Password"
                  })
         {
             Assert.Contains(label, cut.Markup);
         }
+
+        // Setup and Login are gone once the user can already work in a household.
+        Assert.DoesNotContain("Setup", cut.Markup);
+        Assert.DoesNotContain("Login", cut.Markup);
+    }
+
+    [Fact]
+    public void MainLayout_SignedOutAtAProtectedPage_LandsOnLogin()
+    {
+        _authenticationService.HasSession = false;
+        _navigation.NavigateTo("/dashboard");
+
+        var cut = Render<MainLayout>();
+
+        cut.WaitForAssertion(() =>
+            Assert.EndsWith("/login", _navigation.Uri, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void MainLayout_WithoutHouseholdAtAProtectedPage_LandsOnSetup()
+    {
+        _authenticationService.HasSession = true;
+        _apiClient.GetResponse = new List<Household>();
+        _navigation.NavigateTo("/households");
+
+        var cut = Render<MainLayout>();
+
+        cut.WaitForAssertion(() =>
+            Assert.EndsWith("/setup", _navigation.Uri, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void MainLayout_WithHouseholdAtSetup_LandsOnTheHouseholdListAndDoesNotRenderSetup()
+    {
+        _authenticationService.HasSession = true;
+        _apiClient.GetResponse = new List<Household>
+        {
+            new Household { Id = Guid.NewGuid(), Name = "Family" }
+        };
+        _navigation.NavigateTo("/setup");
+
+        var cut = Render<MainLayout>(parameters => parameters.Add(
+            layout => layout.Body,
+            (RenderFragment)(builder => builder.AddMarkupContent(0, "<p data-testid='page-body'>page</p>"))));
+
+        cut.WaitForAssertion(() =>
+            Assert.EndsWith("/households", _navigation.Uri, StringComparison.Ordinal));
+
+        // The page the state does not allow is never rendered, even for a moment.
+        Assert.Empty(cut.FindAll("[data-testid='page-body']"));
+    }
+
+    [Fact]
+    public void MainLayout_AllowedPage_RendersThePageBody()
+    {
+        _authenticationService.HasSession = true;
+        _apiClient.GetResponse = new List<Household>
+        {
+            new Household { Id = Guid.NewGuid(), Name = "Family" }
+        };
+        _navigation.NavigateTo("/dashboard");
+
+        var cut = Render<MainLayout>(parameters => parameters.Add(
+            layout => layout.Body,
+            (RenderFragment)(builder => builder.AddMarkupContent(0, "<p data-testid='page-body'>page</p>"))));
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-testid='page-body']")));
+        Assert.EndsWith("/dashboard", _navigation.Uri, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MainLayout_HouseholdLoadFailure_KeepsTheRequestedPage()
+    {
+        _authenticationService.HasSession = true;
+        _apiClient.Throw = new ClientErrorException(ClientErrorCode.Unknown, "households");
+        _navigation.NavigateTo("/households");
+
+        var cut = Render<MainLayout>(parameters => parameters.Add(
+            layout => layout.Body,
+            (RenderFragment)(builder => builder.AddMarkupContent(0, "<p data-testid='page-body'>page</p>"))));
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-testid='page-body']")));
+
+        // A list that cannot be read is not "no household": the user is not sent to Setup.
+        Assert.EndsWith("/households", _navigation.Uri, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task MainLayout_HouseholdCreatedWithoutReload_UpdatesTheMenu()
+    {
+        _authenticationService.HasSession = true;
+        _apiClient.GetResponse = new List<Household>();
+
+        var cut = Render<MainLayout>();
+
+        cut.WaitForAssertion(() => Assert.Contains("Setup", cut.Markup));
+
+        // Stand in for a page refreshing the household list after creating one.
+        _apiClient.GetResponse = new List<Household>
+        {
+            new Household { Id = Guid.NewGuid(), Name = "Family" }
+        };
+        await Services.GetRequiredService<HouseholdContextService>().RefreshAsync();
+
+        cut.WaitForAssertion(() => Assert.Contains("Household Dashboard", cut.Markup));
+        Assert.DoesNotContain("Setup", cut.Markup);
     }
 
     [Fact]

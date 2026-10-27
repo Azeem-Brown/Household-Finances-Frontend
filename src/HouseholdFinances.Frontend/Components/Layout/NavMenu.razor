@@ -1,14 +1,32 @@
-﻿<MudNavMenu>
-    <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Home">Home</MudNavLink>
-    <MudDivider Class="my-2" />
-    <MudNavLink Href="/login" Icon="@Icons.Material.Filled.Login">Login</MudNavLink>
-    <MudNavLink Href="/setup" Icon="@Icons.Material.Filled.RocketLaunch">Setup</MudNavLink>
-    <MudNavLink Href="/dashboard" Icon="@Icons.Material.Filled.Dashboard">Household Dashboard</MudNavLink>
-    <MudNavLink Href="/households" Icon="@Icons.Material.Filled.SwapHoriz">Switch household</MudNavLink>
-    <MudNavLink Href="/income" Icon="@Icons.Material.Filled.AttachMoney">Income</MudNavLink>
-    <MudNavLink Href="/bills" Icon="@Icons.Material.Filled.ReceiptLong">Bills</MudNavLink>
-    <MudNavLink Href="/profile" Icon="@Icons.Material.Filled.Person">Profile</MudNavLink>
-    <MudNavLink Href="/branding" Icon="@Icons.Material.Filled.Image">Household Branding</MudNavLink>
-    <MudNavLink Href="/reset-password" Icon="@Icons.Material.Filled.LockReset">Reset Password</MudNavLink>
+﻿@* The entries follow the state the shell resolved, so a user is only offered pages they can
+   actually use. MainLayout passes the state, and the page gate uses the same answer. *@
+<MudNavMenu>
+    @if (State == AppAccessState.SignedOut)
+    {
+        <MudNavLink Href="/login" Icon="@Icons.Material.Filled.Login">Login</MudNavLink>
+    }
+    else if (State == AppAccessState.NoHousehold)
+    {
+        <MudNavLink Href="/setup" Icon="@Icons.Material.Filled.RocketLaunch">Setup</MudNavLink>
+        <MudNavLink Href="/profile" Icon="@Icons.Material.Filled.Person">Profile</MudNavLink>
+    }
+    else
+    {
+        <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Home">Home</MudNavLink>
+        <MudDivider Class="my-2" />
+        <MudNavLink Href="/dashboard" Icon="@Icons.Material.Filled.Dashboard">Household Dashboard</MudNavLink>
+        <MudNavLink Href="/households" Icon="@Icons.Material.Filled.SwapHoriz">Switch household</MudNavLink>
+        <MudNavLink Href="/income" Icon="@Icons.Material.Filled.AttachMoney">Income</MudNavLink>
+        <MudNavLink Href="/bills" Icon="@Icons.Material.Filled.ReceiptLong">Bills</MudNavLink>
+        <MudNavLink Href="/profile" Icon="@Icons.Material.Filled.Person">Profile</MudNavLink>
+        <MudNavLink Href="/branding" Icon="@Icons.Material.Filled.Image">Household Branding</MudNavLink>
+        <MudNavLink Href="/reset-password" Icon="@Icons.Material.Filled.LockReset">Reset Password</MudNavLink>
+    }
 </MudNavMenu>
+
+@code {
+    /// <summary>The access state the shell resolved for the current user.</summary>
+    [Parameter]
+    public AppAccessState State { get; set; } = AppAccessState.SignedOut;
+}
 
