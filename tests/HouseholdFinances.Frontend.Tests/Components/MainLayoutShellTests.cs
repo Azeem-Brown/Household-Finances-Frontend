@@ -102,13 +102,14 @@ public class MainLayoutShellTests : BunitContext, IAsyncLifetime
         foreach (string label in new[]
                  {
                      "Home", "Household Dashboard", "Switch household", "Income",
-                     "Bills", "Profile", "Household Branding", "Reset Password"
+                     "Bills", "Profile", "Household Branding"
                  })
         {
             Assert.Contains(label, cut.Markup);
         }
 
-        // Setup and Login are gone once the user can already work in a household.
+        // Setup and Login are gone once the user can already work in a household. Password reset is
+        // not offered because sign-in is through Google.
         Assert.DoesNotContain("Setup", cut.Markup);
         Assert.DoesNotContain("Login", cut.Markup);
     }
