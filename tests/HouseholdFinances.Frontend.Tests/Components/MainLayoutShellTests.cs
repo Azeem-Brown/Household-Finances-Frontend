@@ -19,6 +19,7 @@ public class MainLayoutShellTests : BunitContext, IAsyncLifetime
 {
     private readonly ThemeService _themeService = new();
     private readonly StubAuthenticationService _authenticationService = new();
+    private readonly StubApiClient _apiClient = new();
 
     public MainLayoutShellTests()
     {
@@ -27,6 +28,8 @@ public class MainLayoutShellTests : BunitContext, IAsyncLifetime
         Services.AddMudServices();
         Services.AddSingleton(_themeService);
         Services.AddSingleton<IAuthenticationService>(_authenticationService);
+        Services.AddSingleton<IApiClient>(_apiClient);
+        Services.AddScoped<HouseholdContextService>();
     }
 
     // Rendering the shell resolves MudBlazor services that only implement IAsyncDisposable, so the

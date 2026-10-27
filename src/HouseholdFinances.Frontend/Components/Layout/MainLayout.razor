@@ -2,6 +2,8 @@
 @implements IDisposable
 @inject ThemeService ThemeService
 @inject IAuthenticationService AuthenticationService
+@inject HouseholdContextService HouseholdContext
+@inject IApiClient ApiClient
 @inject NavigationManager Navigation
 
 <MudThemeProvider Theme="@ThemeService.Theme" @bind-IsDarkMode="@ThemeService.IsDarkMode" />
@@ -16,6 +18,16 @@
                        Edge="Edge.Start"
                        OnClick="ToggleDrawer"
                        aria-label="Toggle navigation menu" />
+        <MudAvatar Color="Color.Secondary" Size="Size.Small" Class="ml-2" data-testid="shell-logo">
+            @if (_logoDataUrl is not null)
+            {
+                <img src="@_logoDataUrl" alt="Household logo" class="shell-logo-image" />
+            }
+            else
+            {
+                <MudIcon Icon="@Icons.Material.Filled.AccountBalanceWallet" />
+            }
+        </MudAvatar>
         <MudText Typo="Typo.h6" Class="ml-2">Household Finances</MudText>
         <MudSpacer />
         @if (_isSignedIn)
@@ -55,6 +67,8 @@
 @code {
     private bool _drawerOpen = true;
     private bool _isSignedIn;
+    private string? _logoDataUrl;
+    private Guid? _logoHouseholdId;
 
     private void ToggleDrawer() => _drawerOpen = !_drawerOpen;
 
@@ -62,6 +76,48 @@
     {
         Navigation.LocationChanged += OnLocationChanged;
         _isSignedIn = await AuthenticationService.HasSessionAsync();
+        await LoadLogoAsync();
+    }
+
+    // Branding is decorative: a household or logo that cannot be loaded leaves the placeholder and
+    // must never take the shell down.
+    private async Task LoadLogoAsync()
+    {
+        if (!_isSignedIn)
+        {
+            _logoDataUrl = null;
+            _logoHouseholdId = null;
+            return;
+        }
+
+        try
+        {
+            await HouseholdContext.EnsureLoadedAsync();
+            Household? household = HouseholdContext.SelectedHousehold;
+
+            if (household is null)
+            {
+                _logoDataUrl = null;
+                _logoHouseholdId = null;
+                return;
+            }
+
+            if (_logoHouseholdId == household.Id && _logoDataUrl is not null)
+            {
+                return;
+            }
+
+            FileContent? logo = await ApiClient.GetFileAsync($"/api/v1/households/{household.Id}/logo");
+            _logoDataUrl = logo is null
+                ? null
+                : $"data:{logo.ContentType};base64,{Convert.ToBase64String(logo.Content)}";
+            _logoHouseholdId = household.Id;
+        }
+        catch (Exception)
+        {
+            _logoDataUrl = null;
+            _logoHouseholdId = null;
+        }
     }
 
     // The layout outlives a single page, so signing in on the login page or signing out here only
@@ -76,6 +132,7 @@
         }
 
         _isSignedIn = isSignedIn;
+        await LoadLogoAsync();
         await InvokeAsync(StateHasChanged);
     }
 

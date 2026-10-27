@@ -68,6 +68,58 @@ public sealed class ApiClient : IApiClient
     }
 
     /// <inheritdoc />
+    public async Task PutFileAsync(
+        string path,
+        string fileName,
+        string contentType,
+        byte[] content,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(contentType);
+        ArgumentNullException.ThrowIfNull(content);
+
+        // The factory runs again if the access token is refreshed and the request is retried, so each
+        // attempt gets its own multipart body.
+        using HttpResponseMessage response = await SendAuthenticatedRawAsync(
+            HttpMethod.Put,
+            path,
+            () => CreateFileContent(fileName, contentType, content),
+            cancellationToken);
+
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<Models.FileContent?> GetFileAsync(string path, CancellationToken cancellationToken = default)
+    {
+        using HttpResponseMessage response = await SendAuthenticatedRawAsync(HttpMethod.Get, path, () => null, cancellationToken);
+
+        // An absent image is an ordinary state, not an error: the caller renders its placeholder.
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        byte[] content = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        string contentType = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+
+        return new Models.FileContent(contentType, content);
+    }
+
+    private static MultipartFormDataContent CreateFileContent(string fileName, string contentType, byte[] content)
+    {
+        ByteArrayContent file = new ByteArrayContent(content);
+        file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+
+        MultipartFormDataContent form = new MultipartFormDataContent();
+        form.Add(file, "file", fileName);
+        return form;
+    }
+
+    /// <inheritdoc />
     public async Task<TResponse> PostAnonymousAsync<TRequest, TResponse>(string path, TRequest body, CancellationToken cancellationToken = default)
     {
         using HttpResponseMessage response = await SendAsync(HttpMethod.Post, path, body, accessToken: null, cancellationToken);
@@ -84,14 +136,25 @@ public sealed class ApiClient : IApiClient
         return await ReadRequiredAsync<TResponse>(response, cancellationToken);
     }
 
-    private async Task<HttpResponseMessage> SendAuthenticatedRawAsync(
+    private Task<HttpResponseMessage> SendAuthenticatedRawAsync(
         HttpMethod method,
         string path,
         object? body,
+        CancellationToken cancellationToken) =>
+        SendAuthenticatedRawAsync(
+            method,
+            path,
+            () => body is null ? null : JsonContent.Create(body, body.GetType(), options: JsonOptions),
+            cancellationToken);
+
+    private async Task<HttpResponseMessage> SendAuthenticatedRawAsync(
+        HttpMethod method,
+        string path,
+        Func<HttpContent?> contentFactory,
         CancellationToken cancellationToken)
     {
         TokenPair? tokens = await _tokenStore.GetAsync(cancellationToken);
-        HttpResponseMessage response = await SendAsync(method, path, body, tokens?.AccessToken, cancellationToken);
+        HttpResponseMessage response = await SendAsync(method, path, contentFactory, tokens?.AccessToken, cancellationToken);
 
         if (response.StatusCode != HttpStatusCode.Unauthorized ||
             string.IsNullOrEmpty(tokens?.RefreshToken))
@@ -100,13 +163,14 @@ public sealed class ApiClient : IApiClient
         }
 
         // The access token was rejected: dispose the first attempt, refresh the pair once, and
-        // retry the original request once with the replacement token.
+        // retry the original request once with the replacement token. The factory builds a fresh
+        // body, because the first request's content was disposed with it.
         response.Dispose();
 
         TokenPair refreshed = await RefreshAsync(tokens!.RefreshToken!, path, cancellationToken);
         await _tokenStore.SetAsync(refreshed, cancellationToken);
 
-        return await SendAsync(method, path, body, refreshed.AccessToken, cancellationToken);
+        return await SendAsync(method, path, contentFactory, refreshed.AccessToken, cancellationToken);
     }
 
     private async Task<TokenPair> RefreshAsync(
@@ -159,18 +223,31 @@ public sealed class ApiClient : IApiClient
         return new ClientErrorException(ClientErrorCode.Unauthorized, identifier, innerException);
     }
 
-    private async Task<HttpResponseMessage> SendAsync(
+    private Task<HttpResponseMessage> SendAsync(
         HttpMethod method,
         string path,
         object? body,
         string? accessToken,
+        CancellationToken cancellationToken) =>
+        SendAsync(
+            method,
+            path,
+            () => body is null ? null : JsonContent.Create(body, body.GetType(), options: JsonOptions),
+            accessToken,
+            cancellationToken);
+
+    private async Task<HttpResponseMessage> SendAsync(
+        HttpMethod method,
+        string path,
+        Func<HttpContent?> contentFactory,
+        string? accessToken,
         CancellationToken cancellationToken)
     {
         using HttpRequestMessage request = new HttpRequestMessage(method, path);
-
-        if (body is not null)
+        HttpContent? content = contentFactory();
+        if (content is not null)
         {
-            request.Content = JsonContent.Create(body, body.GetType(), options: JsonOptions);
+            request.Content = content;
         }
 
         if (!string.IsNullOrEmpty(accessToken))

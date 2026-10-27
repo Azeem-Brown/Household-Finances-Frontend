@@ -72,6 +72,29 @@ public interface IApiClient
     Task DeleteAsync(string path, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Sends an authenticated PUT of a file as <c>multipart/form-data</c> and expects no response body.
+    /// </summary>
+    /// <param name="path">The API path, for example <c>/api/v1/households/{id}/logo</c>.</param>
+    /// <param name="fileName">The file name sent in the form part.</param>
+    /// <param name="contentType">The media type of the file, for example <c>image/png</c>.</param>
+    /// <param name="content">The file bytes.</param>
+    /// <param name="cancellationToken">A token to cancel the call.</param>
+    Task PutFileAsync(
+        string path,
+        string fileName,
+        string contentType,
+        byte[] content,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sends an authenticated GET for an image and returns its bytes and media type.
+    /// </summary>
+    /// <param name="path">The API path, for example <c>/api/v1/households/{id}/logo</c>.</param>
+    /// <param name="cancellationToken">A token to cancel the call.</param>
+    /// <returns>The image, or <see langword="null"/> when the API returns not found.</returns>
+    Task<Models.FileContent?> GetFileAsync(string path, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Sends a POST without a bearer token and without refresh handling, for the anonymous
     /// authentication endpoints such as <c>POST /api/v1/auth/google</c>.
     /// </summary>
