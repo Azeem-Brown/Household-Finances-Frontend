@@ -16,13 +16,6 @@
        module; the module completes the browser call when the user clicks the button. *@
     <div id="google-signin-button" data-testid="signin"></div>
 
-    @if (_isSigningIn)
-    {
-        <div class="d-flex align-center mt-4" data-testid="signin-progress">
-            <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Primary" />
-            <MudText Typo="Typo.body2" Class="ml-3">Signing in...</MudText>
-        </div>
-    }
 
     @if (_errorMessage is not null)
     {
@@ -33,7 +26,6 @@
 </MudPaper>
 
 @code {
-    private bool _isSigningIn;
     private bool _signInStarted;
     private string? _errorMessage;
 
@@ -75,11 +67,13 @@
     // decides the post-login destination (setup when the user has no household, the household list
     // when one exists); this page only routes to it. Failures are shown with the shared client error
     // convention and never navigate away.
+    //
+    // The call stays pending while the rendered Google button waits for the user to click it, so it
+    // must not drive a progress indicator: an indicator here would spin for as long as the page is
+    // open. The button itself is the affordance.
     private async Task SignInAsync()
     {
-        _isSigningIn = true;
         _errorMessage = null;
-        StateHasChanged();
 
         try
         {
@@ -107,7 +101,8 @@
         }
         finally
         {
-            _isSigningIn = false;
+            // The failure message is the only thing this page can show afterwards, so the render is
+            // requested once the attempt has finished rather than while it waits on the user.
             StateHasChanged();
         }
     }
