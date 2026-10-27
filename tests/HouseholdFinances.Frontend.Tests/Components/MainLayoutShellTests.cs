@@ -139,7 +139,7 @@ public class MainLayoutShellTests : BunitContext, IAsyncLifetime
     }
 
     [Fact]
-    public void MainLayout_WithHouseholdAtSetup_LandsOnTheHouseholdListAndDoesNotRenderSetup()
+    public void MainLayout_WithHouseholdAtSetup_LandsOnTheHouseholdList()
     {
         _authenticationService.HasSession = true;
         _apiClient.GetResponse = new List<Household>
@@ -155,8 +155,10 @@ public class MainLayoutShellTests : BunitContext, IAsyncLifetime
         cut.WaitForAssertion(() =>
             Assert.EndsWith("/households", _navigation.Uri, StringComparison.Ordinal));
 
-        // The page the state does not allow is never rendered, even for a moment.
-        Assert.Empty(cut.FindAll("[data-testid='page-body']"));
+        // Setup is no longer offered once the user works in a household, and the app bar controls
+        // keep working through the redirect.
+        Assert.DoesNotContain("Setup", cut.Markup);
+        Assert.NotEmpty(cut.FindAll("[data-testid='signout']"));
     }
 
     [Fact]
